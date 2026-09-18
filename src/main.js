@@ -27,6 +27,9 @@ const state = {
   scale: 1.35,
   placementSignerId: null,
   message: null,
+  draftName: '',
+  draftFile: null,
+  creating: false,
 }
 
 const esc = (s='') => String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))
@@ -45,8 +48,15 @@ function render() {
 
 function flash(type, text) {
   state.message = { type, text }
-  render()
-  setTimeout(() => { state.message = null; render() }, 4500)
+  let notice = document.querySelector('#appNotice')
+  if (!notice) {
+    notice = document.createElement('div')
+    notice.id = 'appNotice'
+    notice.setAttribute('role', 'status')
+    app.prepend(notice)
+  }
+  notice.className = type
+  notice.textContent = text
 }
 
 function messageHtml() {
@@ -67,8 +77,17 @@ async function boot() {
   const { data } = await supabase.auth.getSession()
   state.session = data.session
   supabase.auth.onAuthStateChange((_event, session) => {
+    const previousUser = state.session?.user?.id
     state.session = session
-    if (session) loadDocuments(); else renderLogin()
+    // A focus/token event must not replace the file input or current editor.
+    if (session && session.user.id !== previousUser) {
+      setTimeout(() => loadDocuments().catch(err => flash('error', err.message)), 0)
+    } else if (!session && previousUser) {
+      state.draftFile = null
+      state.draftName = ''
+      state.currentDoc = null
+      renderLogin()
+    }
   })
   if (state.session) await loadDocuments(); else renderLogin()
 }
@@ -100,14 +119,45 @@ function renderDashboard() {
   const docs = state.documents.map(d => `<div class="doc-item" data-id="${d.id}"><div class="row between"><strong>${esc(d.name)}</strong><span class="pill ${d.status==='signed'?'signed':'pending'}">${esc(d.status)}</span></div><div class="small muted">${new Date(d.created_at).toLocaleString('fr-FR')}</div></div>`).join('') || '<p class="muted">Aucun document.</p>'
   app.innerHTML = layout(`<main class="container grid grid-2"><section class="card stack"><div><h2>Nouveau document</h2><p class="muted">Importe un PDF, puis place automatiquement ou manuellement les zones de signature.</p></div>${messageHtml()}<div class="field"><label>Nom du dossier</label><input id="docName" placeholder="Ex. ISF Montereau S38"></div><div class="field"><label>Document PDF</label><input id="docFile" type="file" accept="application/pdf"></div><button class="btn blue" id="createDoc">Créer le dossier</button></section><section class="card"><div class="row between"><div><h2>Documents</h2><p class="muted">Suivi des signatures et téléchargement du PDF courant.</p></div></div><div class="doc-list">${docs}</div></section></main>`, `<span class="small">${esc(state.session.user.email)}</span><button class="btn secondary" id="logout">Déconnexion</button>`)
   document.querySelector('#logout').onclick = () => supabase.auth.signOut()
+  const nameInput = document.querySelector('#docName')
+  const fileInput = document.querySelector('#docFile')
+  nameInput.value = state.draftName
+  nameInput.oninput = e => { state.draftName = e.target.value }
+  fileInput.accept = '.pdf,application/pdf'
+  const selected = document.createElement('p')
+  selected.id = 'selectedFile'
+  selected.className = 'small muted'
+  selected.setAttribute('aria-live', 'polite')
+  selected.textContent = state.draftFile ? `PDF sélectionné : ${state.draftFile.name}` : 'Aucun PDF sélectionné.'
+  fileInput.after(selected)
+  fileInput.onchange = () => {
+    const file = fileInput.files?.[0]
+    if (!file) return
+    state.draftFile = file
+    if (!nameInput.value.trim()) {
+      state.draftName = file.name.replace(/\.pdf$/i, '')
+      nameInput.value = state.draftName
+    }
+    selected.textContent = `PDF sélectionné : ${file.name} (${Math.ceil(file.size / 1024)} Ko)`
+  }
   document.querySelector('#createDoc').onclick = createDocument
-  document.querySelectorAll('.doc-item').forEach(el => el.onclick = () => openDocument(el.dataset.id))
+  document.querySelectorAll('.doc-item').forEach(el => el.onclick = () => openDocument(el.dataset.id).catch(err => flash('error', `Impossible d’ouvrir le PDF : ${err.message}`)))
 }
 
 async function createDocument() {
+  if (state.creating) return
   const name = document.querySelector('#docName').value.trim()
-  const file = document.querySelector('#docFile').files[0]
+  state.draftName = name
+  const file = state.draftFile || document.querySelector('#docFile').files[0]
   if (!name || !file) return flash('error', 'Nom et PDF obligatoires.')
+  state.draftFile = file
+  const button = document.querySelector('#createDoc')
+  state.creating = true
+  button.disabled = true
+  button.textContent = 'Chargement du PDF…'
+  try {
+  const header = new TextDecoder().decode(await file.slice(0, 1024).arrayBuffer())
+  if (!header.includes('%PDF-')) throw new Error('Ce fichier n’est pas un PDF valide. Exporte le document au format PDF puis réessaie.')
   const docId = uid()
   const owner = state.session.user.id
   const storagePath = `${owner}/${docId}/original.pdf`
@@ -115,11 +165,20 @@ async function createDocument() {
   if (insertError) return flash('error', insertError.message)
   const { error: uploadError } = await supabase.storage.from('signatureflow-documents').upload(storagePath, file, { contentType: 'application/pdf', upsert: false })
   if (uploadError) {
-    await supabase.from('signatureflow_documents').delete().eq('id', docId)
-    return flash('error', uploadError.message)
+    const { error: cleanupError } = await supabase.from('signatureflow_documents').delete().eq('id', docId)
+    return flash('error', `${uploadError.message}${cleanupError ? ' — Le dossier incomplet n’a pas pu être supprimé.' : ''}`)
   }
+  state.draftFile = null
+  state.draftName = ''
   await loadDocuments()
   await openDocument(docId)
+  } catch (err) {
+    flash('error', `Impossible de charger le PDF : ${err.message || 'Erreur inconnue'}`)
+  } finally {
+    state.creating = false
+    button.disabled = false
+    button.textContent = 'Créer le dossier'
+  }
 }
 
 async function openDocument(id) {
@@ -136,7 +195,14 @@ async function openDocument(id) {
   state.audit = audit || []
   state.page = 1
   state.placementSignerId = null
-  await loadPdfForAdmin()
+  try {
+    await loadPdfForAdmin()
+  } catch (err) {
+    state.currentDoc = null
+    state.pdf = null
+    renderDashboard()
+    throw err
+  }
   renderEditor()
 }
 
