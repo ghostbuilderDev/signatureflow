@@ -1,0 +1,16 @@
+SIGNATUREFLOW V1.1 — COMMANDES TERMUX
+
+1) termux-setup-storage
+
+2) cd ~/storage/downloads/signatureflow
+
+3) chmod +x setup-termux.sh configure-and-deploy.sh
+
+4) ./setup-termux.sh signatureflow public
+
+5) ./configure-and-deploy.sh
+
+6) Suivi :
+gh run list
+
+7) Ajouter l’URL GitHub Pages affichée dans Supabase > Authentication > URL Configuration > Redirect URLs.
