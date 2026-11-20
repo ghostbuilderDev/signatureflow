@@ -54,6 +54,43 @@ export function groupLines(tokens) {
   }
   return lines;
 }
+export function isLikelyTableOfContents(lines = []) {
+  const raw = lines.map((line) => line.text || ""),
+    pageText = normalize(raw.join(" ")),
+    explicitHeading =
+      /\b(sommaire|table des matieres|table of contents|contents|indice du document)\b/.test(
+        pageText,
+      ),
+    numberedEntries = raw.filter(
+      (text) =>
+        /(?:\.{2,}|·{2,}|_{2,}|\s{4,})\s*\d{1,3}\s*$/.test(text) ||
+        /^\s*\d+(?:\.\d+)*\s+.{3,}\s+\d{1,3}\s*$/.test(text),
+    ).length,
+    headingEntries = raw.filter(
+      (text) => /^\s*\d+(?:\.\d+){0,4}\s+\S.{2,}$/.test(text),
+    ).length;
+  return (
+    (explicitHeading && (numberedEntries >= 1 || headingEntries >= 3)) ||
+    numberedEntries >= 5
+  );
+}
+function hasIdentityEvidence(text, signers) {
+  const value = normalize(text);
+  if (
+    /\b(nom|prenom|nom et prenom|fonction|qualite|role|responsable|representant|intervenant|agent|entreprise|employeur|client|titulaire)\b/.test(
+      value,
+    )
+  )
+    return true;
+  return signers.some((signer) => {
+    const full = normalize(signer.name),
+      role = normalize(signer.role || "");
+    if (full.length > 3 && value.includes(full)) return true;
+    if (role.length > 3 && value.includes(role)) return true;
+    const nameParts = full.split(" ").filter((part) => part.length > 3);
+    return nameParts.length >= 2 && nameParts.every((part) => value.includes(part));
+  });
+}
 const signatureWord =
   /\b(signature(?:s)?|signer ici|signez ici|signed by|sign here|firma|unterschrift|handtekening|visa)\b/;
 const narrative =
@@ -114,6 +151,7 @@ export function detectFromLayout({
   signers = [],
 }) {
   const lines = groupLines(tokens),
+    tableOfContents = isLikelyTableOfContents(lines),
     candidates = [];
   for (const widget of widgets) {
     const type = classifyLabel(widget.label || "");
@@ -131,6 +169,9 @@ export function detectFromLayout({
   for (const line of lines) {
     const type = classifyLabel(line.text);
     if (!type) continue;
+    // A mere occurrence in a summary is not a signing field. Explicit anchors and
+    // native PDF signature widgets remain authoritative.
+    if (tableOfContents && type.reason !== "Ancre explicite") continue;
     const headerCell = cells.find(
       (c) =>
         line.x >= c.x - 0.005 &&
@@ -183,7 +224,7 @@ export function detectFromLayout({
     }
     const nearby = lines
       .filter(
-        (l) => Math.abs(l.y - line.y) < 0.09 && Math.abs(l.x - line.x) < 0.2,
+        (l) => Math.abs(l.y - line.y) < 0.11 && Math.abs(l.x - line.x) < 0.28,
       )
       .map((l) => l.text)
       .join(" ");
@@ -198,6 +239,17 @@ export function detectFromLayout({
           r.x + r.width >= line.x + 0.04,
       )
       .sort((a, b) => a.y - b.y)[0];
+    const identityEvidence = hasIdentityEvidence(nearby, signers),
+      directAction = /\b(signer ici|signez ici|sign here)\b/.test(
+        normalize(line.text),
+      );
+    if (
+      type.reason !== "Ancre explicite" &&
+      !rule &&
+      !identityEvidence &&
+      !directAction
+    )
+      continue;
     const next = lines
       .filter(
         (l) =>
@@ -244,6 +296,8 @@ export function detectFromLayout({
         : rule?.width?.valueOf() > 0
           ? 0.04
           : -0.04);
+    if (identityEvidence) confidence += 0.07;
+    if (directAction) confidence += 0.05;
     if (line.source === "ocr") confidence -= 0.1;
     if (box.height < 0.03) confidence -= 0.12;
     candidates.push({

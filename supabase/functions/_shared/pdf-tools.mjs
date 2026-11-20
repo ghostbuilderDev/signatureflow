@@ -61,10 +61,20 @@ function fitted(font, text, maxWidth, maxSize) {
 export async function stampPdf(
   pdf,
   fields,
-  { signature, initials, typedName, signedAt, values = {}, email },
+  {
+    signature,
+    initials,
+    typedName,
+    role = "",
+    identityStamp = true,
+    signedAt,
+    values = {},
+    email,
+  },
   lib,
 ) {
-  const font = await pdf.embedFont(lib.StandardFonts.Helvetica);
+  const font = await pdf.embedFont(lib.StandardFonts.Helvetica),
+    bold = await pdf.embedFont(lib.StandardFonts.HelveticaBold);
   const image = await pdf.embedPng(signature),
     initialImage = initials ? await pdf.embedPng(initials) : null;
   for (const f of fields) {
@@ -78,17 +88,17 @@ export async function stampPdf(
         y: b.y + x * Math.sin(a) + y * Math.cos(a),
       };
     };
-    const text = (value, y, maxSize = 10) => {
+    const text = (value, y, maxSize = 10, selectedFont = font) => {
       const valueSafe = safe(value),
         size = fitted(
-          font,
+          selectedFont,
           valueSafe,
           b.width - 4,
           Math.min(maxSize, b.height * 0.65),
         );
       p.drawText(valueSafe, {
         ...origin(pad, y),
-        font,
+        font: selectedFont,
         size,
         rotate: lib.degrees(b.rotation),
         color: lib.rgb(0.09, 0.14, 0.2),
@@ -97,19 +107,34 @@ export async function stampPdf(
     if (f.kind === "signature" || f.kind === "initials") {
       const img = f.kind === "initials" ? initialImage : image;
       if (!img) throw new Error("Paraphe obligatoire");
-      const availableH = Math.max(4, b.height - 13),
+      const footerHeight = identityStamp
+          ? Math.min(20, Math.max(9, b.height * 0.42))
+          : Math.min(12, Math.max(7, b.height * 0.3)),
+        availableH = Math.max(4, b.height - footerHeight - 2),
         scale = Math.min((b.width - 4) / img.width, availableH / img.height);
       p.drawImage(img, {
-        ...origin(pad + (b.width - 4 - img.width * scale) / 2, 12),
+        ...origin(
+          pad + (b.width - 4 - img.width * scale) / 2,
+          footerHeight,
+        ),
         width: img.width * scale,
         height: img.height * scale,
         rotate: lib.degrees(b.rotation),
       });
-      text(
-        `${typedName} - ${signedAt.toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" })}`,
-        2,
-        6,
-      );
+      const when = signedAt.toLocaleString("fr-FR", {
+        timeZone: "Europe/Paris",
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+      if (identityStamp) {
+        text(
+          `${typedName}${role ? ` — ${role}` : ""}`,
+          Math.max(5, footerHeight * 0.5),
+          6.5,
+          bold,
+        );
+        text(`Signé le ${when}`, 1.5, 5.5);
+      } else text(`${typedName} — ${when}`, 2, 6);
     } else if (f.kind === "name") text(typedName, pad);
     else if (f.kind === "date")
       text(

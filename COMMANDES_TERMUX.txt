@@ -1,19 +1,19 @@
-SIGNATUREFLOW 2.0.1 — CONNEXION ET PUBLICATION VÉRIFIÉE
+SIGNATUREFLOW 2.1.0 — SIGNATURES NOMINATIVES ET CIRCUITS AUTOMATIQUES
 
-Télécharger SIGNATUREFLOW-V2.0.1-TERMUX.zip dans Téléchargements, puis coller :
+Télécharger SIGNATUREFLOW-V2.1.0-TERMUX.zip dans Téléchargements, puis coller :
 
 termux-setup-storage
 pkg install -y unzip
-SF_STAGE="$(mktemp -d "$HOME/signatureflow-v2.XXXXXX")"
-unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.0.1-TERMUX.zip" -d "$SF_STAGE" &&
+SF_STAGE="$(mktemp -d "$HOME/signatureflow-v2.1.XXXXXX")"
+unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.1.0-TERMUX.zip" -d "$SF_STAGE" &&
 bash "$SF_STAGE/signatureflow-main/update-termux.sh"
 
-Attendre le message SUCCÈS avec la version 2.0.1 et le lien à ouvrir.
+Attendre le message SUCCÈS avec la version 2.1.0 et le lien à ouvrir.
 La commande signale un échec et donne le journal GitHub si la publication échoue.
 Après une erreur de déploiement, relancer seulement :
 cd "$HOME/signatureflow" && bash deploy-and-verify.sh
 
-Par défaut : dépôt GitHub signatureflow, dossier ~/signatureflow.
+Par défaut : dépôt GitHub ghostbuilderDev/signatureflow, dossier ~/signatureflow.
 Pour un autre emplacement :
 SIGNATUREFLOW_REPO_DIR="$HOME/mon-dossier" bash "$SF_STAGE/signatureflow-main/update-termux.sh" Proprietaire/Depot
 
@@ -26,6 +26,6 @@ gh run list --workflow supabase.yml
 gh run list --workflow pages.yml
 
 L’application est reconstruite et publiée après le succès du backend.
-Aucun destinataire n’est contacté par ces commandes.
-Le service e-mail Resend est facultatif : les liens peuvent être copiés et envoyés par JDC ou votre messagerie.
-Lire README.md pour le premier déploiement et les limites de l’analyse.
+Aucun destinataire n’est contacté par la mise à jour.
+Les e-mails ne partent qu’après une action explicite dans un dossier SignatureFlow.
+Lire README.md pour le fonctionnement des deux circuits et les limites de l’analyse.

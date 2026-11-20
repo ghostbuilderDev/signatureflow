@@ -9,6 +9,14 @@ export async function prepareSignatureFlow({
   title,
   sourceRef = "",
   signers = [],
+  workflowType = "approval",
+  completionMode =
+    workflowType === "acknowledgement"
+      ? "signer_after_each"
+      : "all_after_complete",
+  completionRecipients = [],
+  requireFullRead = true,
+  identityStamp = true,
   appUrl,
 }) {
   if (!(file instanceof Blob) || file.size > 20 * 1024 * 1024)
@@ -34,7 +42,7 @@ export async function prepareSignatureFlow({
       document_id: id,
       name: s.name.trim(),
       email,
-      role: s.role || "",
+      role: (s.role || "Intervenant").slice(0, 100),
       signing_order: i + 1,
     };
   });
@@ -46,6 +54,11 @@ export async function prepareSignatureFlow({
         owner_id: session.user.id,
         name: (title || file.name || "Document à signer").slice(0, 200),
         source_ref: String(sourceRef).slice(0, 200),
+        workflow_type: workflowType,
+        completion_mode: completionMode,
+        completion_recipients: completionRecipients,
+        require_full_read: requireFullRead,
+        identity_stamp: identityStamp,
         storage_path: path,
         current_storage_path: path,
       }),
@@ -70,14 +83,14 @@ export async function getSignatureFlowProgress(supabase, documentId) {
   const document = unwrap(
     await supabase
       .from("signatureflow_documents")
-      .select("id,name,status,source_ref,updated_at,current_sha256")
+      .select("id,name,status,source_ref,updated_at,current_sha256,workflow_type,completion_mode")
       .eq("id", documentId)
       .single(),
   );
   const signers = unwrap(
     await supabase
       .from("signatureflow_signers")
-      .select("id,name,email,status,signed_at,signing_order")
+      .select("id,name,email,role,status,signed_at,signing_order,copy_sent_at")
       .eq("document_id", documentId)
       .order("signing_order"),
   );

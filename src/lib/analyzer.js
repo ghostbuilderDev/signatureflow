@@ -4,6 +4,8 @@ import {
   detectRules,
   detectTableCells,
   deduplicate,
+  groupLines,
+  isLikelyTableOfContents,
 } from "./detection-core.js";
 export async function analyzePdf(
   pdf,
@@ -128,6 +130,10 @@ export async function analyzePdf(
           );
         }
       }
+      if (isLikelyTableOfContents(groupLines(tokens)))
+        warnings.push(
+          `Page ${p} : sommaire détecté, les simples mentions « signature » ont été ignorées.`,
+        );
       candidates.push(
         ...detectFromLayout({
           page: p,

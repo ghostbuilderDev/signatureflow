@@ -101,13 +101,22 @@ Deno.serve(async (req) => {
     if (audit.error) throw audit.error;
     return json({
       blocked,
-      signer: { name: signer.name, email: signer.email, status: signer.status },
+      signer: {
+        name: signer.name,
+        email: signer.email,
+        role: signer.role || "",
+        status: signer.status,
+      },
       document: {
         name: doc.name,
         signedUrl: signed.signedUrl,
         sha256: hash,
         revision: doc.revision,
         status: doc.status,
+        pageCount: doc.page_count,
+        workflowType: doc.workflow_type || "approval",
+        requireFullRead: doc.require_full_read !== false,
+        identityStamp: doc.identity_stamp !== false,
       },
       fields,
     });

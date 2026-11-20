@@ -6,6 +6,7 @@ const remote = await readdir(target);
 for (const name of [
   "20260918182400_signatureflow.sql",
   "20261120023410_signatureflow_v2.sql",
+  "20261120111204_signatureflow_v3_named_workflows_contacts.sql",
 ]) {
   const version = name.split("_")[0];
   if (remote.some((file) => file.startsWith(version + "_"))) {

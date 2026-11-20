@@ -22,6 +22,12 @@ const doc = {
   current_sha256: sourceHash,
   revision: 1,
   signing_mode: "parallel",
+  page_count: 1,
+  workflow_type: "approval",
+  completion_mode: "manual",
+  completion_recipients: [],
+  require_full_read: true,
+  identity_stamp: true,
 };
 const signer = {
   id: signerId,
@@ -31,6 +37,7 @@ const signer = {
   status: "pending",
   token_expires_at: new Date(Date.now() + 86400000).toISOString(),
   signing_order: 1,
+  role: "Responsable travaux",
 };
 const fields = [
   {
@@ -80,11 +87,18 @@ const call = (name: string, body: unknown, auth = false) =>
 let audit: unknown[] = [],
   uploaded: Uint8Array | null = null,
   finished = false,
-  issueCount = 0;
-function installFetch({ resendStatus = 200, alreadySigned = false } = {}) {
+  issueCount = 0,
+  resendPayloads: Record<string, unknown>[] = [];
+function installFetch({
+  resendStatus = 200,
+  alreadySigned = false,
+  completionMode = "manual",
+  completeAfterFinish = false,
+} = {}) {
   audit = [];
   uploaded = null;
   finished = false;
+  resendPayloads = [];
   globalThis.fetch = (async (
     input: RequestInfo | URL,
     options?: RequestInit,
@@ -103,7 +117,12 @@ function installFetch({ resendStatus = 200, alreadySigned = false } = {}) {
       });
     if (url.pathname === "/auth/v1/user")
       return j({ id: owner, email: "owner@example.fr" });
-    if (url.pathname === "/rest/v1/signatureflow_documents") return j(doc);
+    if (url.pathname === "/rest/v1/signatureflow_documents")
+      return j({
+        ...doc,
+        completion_mode: completionMode,
+        status: completeAfterFinish && finished ? "signed" : doc.status,
+      });
     if (url.pathname === "/rest/v1/signatureflow_signers")
       return j(url.searchParams.has("token_hash") ? signer : [signer]);
     if (url.pathname === "/rest/v1/signatureflow_signature_fields")
@@ -111,6 +130,10 @@ function installFetch({ resendStatus = 200, alreadySigned = false } = {}) {
     if (url.pathname === "/rest/v1/signatureflow_audit_events") {
       audit.push(payload);
       return new Response(null, { status: 201 });
+    }
+    if (url.pathname === "/rest/v1/signatureflow_deliveries") {
+      if (method === "GET") return j(null);
+      return j(null);
     }
     if (url.pathname === "/rest/v1/rpc/signatureflow_issue") {
       issueCount++;
@@ -124,7 +147,11 @@ function installFetch({ resendStatus = 200, alreadySigned = false } = {}) {
       return j(
         alreadySigned
           ? { alreadySigned: true, sha256: "test-final-hash" }
-          : { document: doc, signer, fields },
+          : {
+              document: { ...doc, completion_mode: completionMode },
+              signer,
+              fields,
+            },
       );
     if (url.pathname === "/rest/v1/rpc/signatureflow_finish") {
       assert(!!payload.p_source && !!payload.p_final, "hash chain required");
@@ -152,6 +179,7 @@ function installFetch({ resendStatus = 200, alreadySigned = false } = {}) {
       return j({ Key: "signed.pdf" });
     }
     if (url.hostname === "api.resend.com") {
+      resendPayloads.push(payload);
       assert(payload.html.includes("&lt;Dupont&gt;"), "recipient HTML escaped");
       assert(
         payload.html.includes("&lt;chantier&gt;"),
@@ -174,6 +202,40 @@ Deno.test(
       assert(data.document.sha256 === sourceHash, "integrity hash exposed");
       assert(!("token_hash" in data.signer), "token hash remains server-side");
       assert(audit.length === 1, "open audited");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  },
+);
+Deno.test(
+  "final validation automatically emails the completed named PDF",
+  async () => {
+    installFetch({
+      completionMode: "all_after_complete",
+      completeAfterFinish: true,
+    });
+    try {
+      const png = await Deno.readFile("tests/fixtures/signature.png"),
+        signatureDataUrl =
+          "data:image/png;base64," + btoa(String.fromCharCode(...png));
+      const response = await call("submit-signature", {
+          token,
+          typedName: "Alice <Dupont>",
+          accepted: true,
+          signatureDataUrl,
+          expectedSha256: sourceHash,
+          requestId: crypto.randomUUID(),
+          readPages: [1],
+        }),
+        data = await response.json();
+      assert(response.status === 200, JSON.stringify(data));
+      assert(data.delivery.sent === 1, "one final copy sent");
+      assert(resendPayloads.length === 1, "one provider request");
+      assert(
+        Array.isArray(resendPayloads[0].attachments) &&
+          resendPayloads[0].attachments.length === 1,
+        "signed PDF attached",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -216,11 +278,12 @@ Deno.test(
           "data:image/png;base64," + btoa(String.fromCharCode(...png));
       const response = await call("submit-signature", {
           token,
-          typedName: "Alice Dupont",
+          typedName: "Alice <Dupont>",
           accepted: true,
           signatureDataUrl,
           expectedSha256: sourceHash,
           requestId: crypto.randomUUID(),
+          readPages: [1],
         }),
         data = await response.json();
       assert(response.status === 200, JSON.stringify(data));

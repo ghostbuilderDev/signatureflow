@@ -3,7 +3,7 @@ set -euo pipefail
 PACKAGE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_NAME="${1:-ghostbuilderDev/signatureflow}"
 TARGET_DIR="${SIGNATUREFLOW_REPO_DIR:-$HOME/signatureflow}"
-echo 'SignatureFlow 2.0.1 — connexion et publication vérifiée'
+echo 'SignatureFlow 2.1.0 — signatures nominatives et circuits automatiques'
 if command -v pkg >/dev/null 2>&1; then pkg install -y git gh rsync unzip curl jq coreutils; fi
 for tool in git gh rsync curl jq; do command -v "$tool" >/dev/null || { echo "Commande manquante : $tool"; exit 1; }; done
 if ! gh auth status >/dev/null 2>&1; then gh auth login --hostname github.com --git-protocol https --scopes workflow --web; fi
@@ -26,14 +26,14 @@ if [ "$CURRENT_BRANCH" != main ]; then echo 'Placez le dépôt sur la branche ma
 git pull --ff-only origin main
 SF_BASE="$(git rev-parse HEAD)"
 case "$SF_BASE" in
- 1bfe34dc4ad83d4c4d5cc29870ab4894363f329c|591036515ef879315b4011b9c21e08b6912af614) ;;
+ 1bfe34dc4ad83d4c4d5cc29870ab4894363f329c|591036515ef879315b4011b9c21e08b6912af614|31f304e968cecd176101c5dc764eed6294954ee7) ;;
  *) case "$(git log -1 --format=%s)" in 'SignatureFlow 2.0.1: connexion et publication'*) ;; *) echo 'Une autre mise à jour existe déjà. Arrêt pour préserver cette version.'; exit 1 ;; esac ;;
 esac
-BACKUP_TAG="signatureflow-before-v2-$(date +%Y%m%d-%H%M%S)"
+BACKUP_TAG="signatureflow-before-v2.1-$(date +%Y%m%d-%H%M%S)"
 git tag "$BACKUP_TAG"
 rsync -a --exclude='.git/' --exclude='node_modules/' --exclude='dist/' --exclude='.env' --exclude='.env.local' --exclude='.env.production' --exclude='test-results/' --exclude='playwright-report/' "$PACKAGE_DIR/" "$TARGET_DIR/"
 git add src public scripts tests integration supabase .github package.json package-lock.json vite.config.js index.html .gitignore .env.example README.md VALIDATION.md COMMANDES_TERMUX.txt setup-termux.sh configure-and-deploy.sh update-termux.sh deploy-and-verify.sh termux-secrets-template.sh playwright.config.js deno.json
-if ! git diff --cached --quiet; then git -c user.name="$(gh api user --jq .login)" -c user.email="$(gh api user --jq .login)@users.noreply.github.com" commit -m 'SignatureFlow 2.0.1: connexion et publication vérifiée'; fi
+if ! git diff --cached --quiet; then git -c user.name="$(gh api user --jq .login)" -c user.email="$(gh api user --jq .login)@users.noreply.github.com" commit -m 'SignatureFlow 2.1.0: signatures nominatives et circuits automatiques'; fi
 git push origin main
 # Restore only missing public settings from the original project configuration.
 SF_SECRET_NAMES="$(gh secret list --json name --jq '.[].name')"

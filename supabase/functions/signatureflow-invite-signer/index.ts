@@ -116,6 +116,7 @@ Deno.serve(async (req) => {
             id: s.id,
             name: s.name,
             email: s.email,
+            role: s.role || "",
             order: s.signing_order,
             url: url.href,
             hash: await sha256Text(token),
@@ -162,8 +163,8 @@ Deno.serve(async (req) => {
               from,
               to: [link.email],
               subject: `Signature requise — ${doc.name}`,
-              text: `Bonjour ${link.name},\nLe document « ${doc.name} » est à lire et signer :\n${link.url}\nLien personnel valable 14 jours.`,
-              html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto"><h2>Document à signer</h2><p>Bonjour ${esc(link.name)},</p><p>${esc(doc.name)}</p><p><a href="${esc(link.url)}">Lire et signer le document</a></p><p>Ce lien est personnel et valable 14 jours.${doc.signing_mode === "sequential" ? " Les signatures sont recueillies dans l’ordre indiqué." : ""}</p></div>`,
+              text: `Bonjour ${link.name},\nVous êtes identifié comme : ${link.role || "signataire"}.\nLe document « ${doc.name} » est à consulter et signer :\n${link.url}\nLien personnel valable 14 jours.`,
+              html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto"><h2>${doc.workflow_type === "acknowledgement" ? "Document à consulter" : "Document à signer"}</h2><p>Bonjour ${esc(link.name)},</p><p>Vous êtes identifié comme : <strong>${esc(link.role || "signataire")}</strong>.</p><p>${esc(doc.name)}</p><p><a href="${esc(link.url)}">Consulter le document et signer</a></p><p>Ce lien est personnel et valable 14 jours.${doc.signing_mode === "sequential" ? " Les signatures sont recueillies dans l’ordre indiqué." : ""}</p></div>`,
             }),
           });
           sent = res.ok;
@@ -190,6 +191,7 @@ Deno.serve(async (req) => {
         id: link.id,
         name: link.name,
         email: link.email,
+        role: link.role,
         url: link.url,
         expires,
         sent,

@@ -41,7 +41,8 @@ async function importDemo(page, bytes) {
 async function addSigner(page, name, email) {
   await page.locator("#signerName").fill(name);
   await page.locator("#signerEmail").fill(email);
-  await page.getByRole("button", { name: "+ Ajouter un signataire" }).click();
+  await page.locator("#signerRole").fill("Responsable travaux");
+  await page.getByRole("button", { name: "+ Ajouter ce signataire" }).click();
   await expect(page.locator("#signerList")).toContainText(name);
 }
 test("desktop imports PDF, detects separate signature blocks, requires review, moves and saves zones", async ({

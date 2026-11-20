@@ -779,6 +779,85 @@ textarea {
   cursor: pointer;
   font-size: clamp(6px, 1.5vw, 12px);
 }
+.contact-book {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.contact-book summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.contact-book .stack {
+  margin-top: 10px;
+}
+.contact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.contact-row:last-child {
+  border-bottom: 0;
+}
+.contact-row span {
+  min-width: 0;
+}
+.contact-row small {
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.remove-contact {
+  border: 0;
+  background: #fff0f0;
+  color: #9d2929;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.review-confirm {
+  padding: 14px;
+  border: 1px solid #b8c8ef;
+  border-radius: 10px;
+  background: #f3f7ff;
+  font-weight: 700;
+}
+.signer-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+}
+.signer-identity .avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+.signer-identity small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.reading-progress {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(120px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: #f3f7ff;
+  color: #264caa;
+  font-weight: 700;
+}
+.reading-progress progress {
+  width: 100%;
+  accent-color: #345ce6;
+}
 .consent {
   padding: 16px;
   background: #f5f8fd;
@@ -954,6 +1033,9 @@ textarea {
   }
   .sign-intro h1 {
     font-size: 22px;
+  }
+  .reading-progress {
+    grid-template-columns: 1fr;
   }
   .signed-result {
     padding: 28px !important;

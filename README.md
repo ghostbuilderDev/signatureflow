@@ -1,4 +1,17 @@
-# SignatureFlow 2.0.1 — préparation et signature de PDF
+# SignatureFlow 2.1.0 — signatures nominatives et circuits documentaires
+
+## Signatures nominatives et parcours configurables (20 novembre 2026)
+
+La zone attribuée à chaque personne est désormais un bloc nominatif : le signataire retrouve son nom, son adresse et sa fonction dans l’écran de lecture ; le PDF final inscrit le nom et la fonction avec la signature et la date. L’identité est liée au lien personnel et n’est plus modifiable dans le formulaire de signature.
+
+Deux usages sont configurables dès l’import :
+
+- **Validation complète** : toutes les signatures sont recueillies, puis le PDF entièrement signé est envoyé automatiquement à chaque participant et aux adresses supplémentaires en copie.
+- **Prise de connaissance** : chaque personne consulte le document, signe son accusé et reçoit immédiatement sa copie. Les destinataires supplémentaires reçoivent la version finale lorsque tout le monde a répondu.
+
+Le carnet de contacts privé évite de ressaisir les noms, fonctions et adresses. Avant l’émission des liens, l’organisateur doit confirmer avoir contrôlé l’intégralité du PDF, les identités et les zones. Le destinataire doit ensuite parcourir toutes les pages dans le lecteur avant que le bouton de signature soit activé, si cette option est conservée.
+
+L’analyseur distingue maintenant les pages de sommaire des véritables blocs de signature. Une simple occurrence du mot « signature » dans un sommaire est ignorée ; les indices structurants (nom, prénom, fonction, rôle, cadre, ligne, cellule de tableau, champ PDF natif ou ancre explicite) sont privilégiés.
 
 ## Correctif connexion et publication (20 novembre 2026)
 
@@ -10,15 +23,20 @@ Le workflow ajoute les deux URL de retour de SignatureFlow à la liste des redir
 
 `update-termux.sh` pousse le correctif puis `deploy-and-verify.sh` attend les deux workflows, retourne une erreur si l’un échoue, et contrôle `version.json` ainsi que le commit réellement servi. Le cache PWA est renouvelé automatiquement. Le ZIP contient les sources ; les dépendances et ressources OCR sont installées et compilées par GitHub Actions.
 
-Installation : télécharger `SIGNATUREFLOW-V2.0.1-TERMUX.zip`, puis exécuter les commandes de `COMMANDES_TERMUX.txt`. L’installeur direct transmis avec le ZIP permet aussi l’installation sans téléchargement manuel. Ne pas réutiliser l’ancien installeur V2.0.
+Installation : télécharger `SIGNATUREFLOW-V2.1.0-TERMUX.zip`, puis exécuter les commandes de `COMMANDES_TERMUX.txt`. Ne pas réutiliser l’ancien ZIP V2.0.1.
 
 Mise à jour du projet fourni (V1.1.1). Interface française pour préparer des PDF, attribuer des emplacements à plusieurs personnes et recueillir leurs signatures par liens personnels, sans compte destinataire.
 
 ## Ce qui est livré
 
 - Tableau de bord et préparation adaptés au téléphone et au bureau.
+- Signatures nominatives avec nom, fonction et date intégrés au bloc signé.
+- Carnet de contacts privé réutilisable.
+- Circuits « validation complète », « prise de connaissance » ou envoi manuel.
+- Copies automatiques du PDF signé avec journalisation de chaque succès ou erreur.
+- Consultation de toutes les pages imposable et enregistrée dans la piste d’audit.
 - PDF jusqu’à 20 Mo et 200 pages ; 40 signataires et 500 zones par dossier.
-- Détection des champs natifs PDF, des libellés français/anglais et de quelques libellés européens, des lignes/cadres et des cellules de tableaux de signatures.
+- Détection des champs natifs PDF, des libellés français/anglais et de quelques libellés européens, des lignes/cadres et des cellules de tableaux de signatures, avec exclusion des simples mentions présentes dans les sommaires.
 - OCR français/anglais sur les pages scannées, avec moteur et modèles hébergés avec l’application. L’analyse ne transmet pas le PDF à un service d’IA externe.
 - Ancres explicites : `{{signature}}`, `{{signature_alice}}`, `{{initials}}`, `{{name}}`, `{{date}}`, `{{text}}`, `{{checkbox}}`. Le suffixe peut aider à reconnaître un nom ou un rôle.
 - Indice de confiance heuristique, propositions à vérifier, rapprochement avec les noms et rôles. Aucune attribution à tour de rôle. Un indice n’est pas une mesure statistique de précision.
@@ -33,13 +51,13 @@ Mise à jour du projet fourni (V1.1.1). Interface française pour préparer des 
 
 ## Mise à jour avec Termux
 
-Télécharger `SIGNATUREFLOW-V2.0.1-TERMUX.zip` dans **Téléchargements**, puis :
+Télécharger `SIGNATUREFLOW-V2.1.0-TERMUX.zip` dans **Téléchargements**, puis :
 
 ```bash
 termux-setup-storage
 pkg install -y unzip
-SF_STAGE="$(mktemp -d "$HOME/signatureflow-v2.XXXXXX")"
-unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.0.1-TERMUX.zip" -d "$SF_STAGE"
+SF_STAGE="$(mktemp -d "$HOME/signatureflow-v2.1.XXXXXX")"
+unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.1.0-TERMUX.zip" -d "$SF_STAGE"
 bash "$SF_STAGE/signatureflow-main/update-termux.sh"
 ```
 
@@ -85,7 +103,7 @@ Pour une toute première installation sans dépôt existant : extraire le ZIP, p
 
 ## Configuration e-mail
 
-Le partage de liens n’exige aucun service d’e-mail. Les boutons **Copier**, **Partager** et **E-mail** permettent de transmettre le lien depuis JDC ou la messagerie de l’appareil.
+Le partage de liens n’exige aucun service d’e-mail. Les boutons **Copier**, **Partager** et **E-mail** permettent de transmettre le lien depuis JDC ou la messagerie de l’appareil. En revanche, les copies automatiques du PDF signé utilisent la même configuration Resend que les invitations automatiques.
 
 Pour l’envoi automatique depuis le serveur, il faut dans les secrets **Edge Functions Supabase** :
 
@@ -98,13 +116,15 @@ Les destinataires ne sont jamais contactés par l’installation : l’organisat
 
 ## Parcours utilisateur
 
-1. Se connecter comme organisateur et importer le PDF.
-2. Ajouter les personnes et, si utile, le rôle mentionné sur le document.
-3. Analyser le PDF. Les pages sans texte exploitable passent en OCR ; « OCR sur toutes les pages » peut aider les PDF mixtes.
-4. Vérifier la position, la taille, le type et le destinataire de **chaque** zone ; cocher sa confirmation. Ajouter les emplacements manquants manuellement.
-5. Enregistrer les zones, puis créer ou envoyer les liens. Le dossier est alors figé.
-6. Le destinataire ouvre son lien, lit le document, complète les champs, trace sa signature et ses initiales si demandées, puis confirme son consentement.
-7. Télécharger la version signée. Actualiser le dossier organisateur pour suivre les réponses et exporter les preuves JSON.
+1. Se connecter comme organisateur, importer le PDF et choisir « validation complète » ou « prise de connaissance ».
+2. Choisir les règles d’envoi automatique, les adresses supplémentaires en copie et l’obligation de consulter toutes les pages.
+3. Ajouter les personnes depuis le carnet de contacts ou enregistrer un nouveau nom, e-mail et fonction.
+4. Analyser le PDF. Les pages sans texte exploitable passent en OCR ; les sommaires sont écartés de l’arbitrage des zones.
+5. Vérifier la position, la taille, le type, le nom et la fonction associés à **chaque** zone ; cocher sa confirmation. Ajouter les emplacements manquants manuellement.
+6. Confirmer avoir contrôlé l’intégralité du document, puis créer ou envoyer les liens. Le dossier est alors figé.
+7. Le destinataire ouvre son lien nominatif, consulte chaque page, complète les champs, trace sa signature et confirme son consentement.
+8. La signature, le nom, la fonction et la date sont inscrits dans le PDF. Selon le circuit, la copie est envoyée immédiatement ou après la dernière signature.
+9. Actualiser le dossier organisateur pour suivre les réponses, les copies envoyées et exporter les preuves JSON.
 
 Si deux personnes consultent simultanément le PDF et qu’une autre signature modifie le document, la seconde est invitée à actualiser et à relire la version mise à jour. Une requête répétée après une signature déjà enregistrée ne signe pas deux fois. Un traitement interrompu libère son verrou ; un verrou abandonné expire après trois minutes.
 

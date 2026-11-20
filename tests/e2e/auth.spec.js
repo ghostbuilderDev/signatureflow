@@ -25,7 +25,7 @@ test("password sign-in explains rejected credentials and never falls back to cre
     },
   );
   await page.goto("/");
-  await expect(page.locator(".version")).toHaveText("v2.0.1");
+  await expect(page.locator(".version")).toHaveText("v2.1.0");
   await page.locator("#email").fill("organisateur@example.fr");
   await page.locator("#password").fill("mot-de-passe-test");
   await page.locator("#showPassword").check();

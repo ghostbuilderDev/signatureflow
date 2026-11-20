@@ -39,8 +39,8 @@ SF_VERSION_FILE="$(mktemp)"
 trap 'rm -f -- "$SF_VERSION_FILE"' EXIT
 for SF_ATTEMPT in $(seq 1 40); do
  if curl -fsSL --max-time 20 "${SF_PUBLIC_URL%/}/version.json?commit=$SF_COMMIT&attempt=$SF_ATTEMPT" -o "$SF_VERSION_FILE"; then
-  if SF_EXPECTED_COMMIT="$SF_COMMIT" jq -e --arg commit "$SF_COMMIT" '.version == "2.0.1" and .commit == $commit' "$SF_VERSION_FILE" >/dev/null 2>&1; then
-   echo 'SUCCÈS : SignatureFlow 2.0.1 est publiée et vérifiée.'
+  if SF_EXPECTED_COMMIT="$SF_COMMIT" jq -e --arg commit "$SF_COMMIT" '.version == "2.1.0" and .commit == $commit' "$SF_VERSION_FILE" >/dev/null 2>&1; then
+   echo 'SUCCÈS : SignatureFlow 2.1.0 est publiée et vérifiée.'
    echo "Ouvrir : ${SF_PUBLIC_URL%/}/?v=$SF_COMMIT"
    exit 0
   fi

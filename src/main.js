@@ -61,6 +61,7 @@ const S = {
   docs: [],
   doc: null,
   signers: [],
+  contacts: [],
   fields: [],
   audit: [],
   pdf: null,
@@ -101,7 +102,7 @@ function shell(content, right = "") {
     p._observer?.disconnect();
   });
   pads = [];
-  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.0.1</span></div></header>${content}`;
+  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.1.0</span></div></header>${content}`;
 }
 async function busy(button, fn) {
   if (button?.disabled) return;
@@ -144,6 +145,7 @@ function download(blob, name) {
 const fileName = () => S.doc.name.replace(/[^\p{L}\p{N}._-]/gu, "_");
 function dirty() {
   S.dirty = true;
+  if (S.doc?.status === "draft") S.doc.prepared_at = null;
   $("#savedState")?.replaceChildren(
     document.createTextNode("Modifications à enregistrer"),
   );
@@ -311,16 +313,23 @@ async function dashboard() {
       }
     }
   }
-  if (!S.demo)
-    S.docs = check(
-      await supabase
+  if (!S.demo) {
+    const [documents, contacts] = await Promise.all([
+      supabase
         .from("signatureflow_documents")
         .select("*")
         .order("created_at", { ascending: false }),
-    );
+      supabase
+        .from("signatureflow_contacts")
+        .select("*")
+        .order("name"),
+    ]);
+    S.docs = check(documents);
+    S.contacts = check(contacts);
+  }
   const count = (s) => S.docs.filter((d) => d.status === s).length;
   shell(
-    `<main class="container"><div class="page-heading"><div><span class="eyebrow">ESPACE DOCUMENTS</span><h1>Les signatures avancent.</h1><p class="muted">Préparez un document et suivez chaque réponse au même endroit.</p></div><button class="btn secondary" id="logout">${S.demo ? "Quitter l’essai" : "Déconnexion"}</button></div><div class="metrics"><div><strong>${count("draft")}</strong><span>À préparer</span></div><div><strong>${count("in_progress")}</strong><span>En signature</span></div><div><strong>${count("signed")}</strong><span>Finalisés</span></div></div><div class="dashboard-grid"><section class="card stack"><span class="eyebrow">NOUVEAU DOCUMENT</span><h2>Commencez par votre PDF</h2><form id="uploadForm" class="stack"><label class="dropzone">↥<strong>Choisir un document PDF</strong><span>20 Mo maximum · 200 pages</span><input id="file" type="file" accept=".pdf,application/pdf" required></label><label>Nom du document<input id="docName" required maxlength="200" placeholder="Ex. Briefing · Montereau · S49"></label><label>Référence du chantier (facultatif)<input id="sourceRef" maxlength="200" placeholder="Nom ou identifiant Journal de Chantier"></label><button class="btn primary">Importer et préparer →</button></form></section><section class="card"><div class="row between"><h2>Mes documents</h2><label class="sr-only" for="filter">Rechercher</label><input id="filter" class="search" placeholder="Rechercher un document…"></div><div id="documentList"></div></section></div></main>`,
+    `<main class="container"><div class="page-heading"><div><span class="eyebrow">ESPACE DOCUMENTS</span><h1>Les signatures avancent.</h1><p class="muted">Préparez un document et suivez chaque réponse au même endroit.</p></div><button class="btn secondary" id="logout">${S.demo ? "Quitter l’essai" : "Déconnexion"}</button></div><div class="metrics"><div><strong>${count("draft")}</strong><span>À préparer</span></div><div><strong>${count("in_progress")}</strong><span>En signature</span></div><div><strong>${count("signed")}</strong><span>Finalisés</span></div></div><div class="dashboard-grid"><section class="card stack"><span class="eyebrow">NOUVEAU DOCUMENT</span><h2>Commencez par votre PDF</h2><form id="uploadForm" class="stack"><label class="dropzone">↥<strong>Choisir un document PDF</strong><span>20 Mo maximum · 200 pages</span><input id="file" type="file" accept=".pdf,application/pdf" required></label><label>Nom du document<input id="docName" required maxlength="200" placeholder="Ex. Briefing · Montereau · S49"></label><label>Référence du chantier (facultatif)<input id="sourceRef" maxlength="200" placeholder="Nom ou identifiant Journal de Chantier"></label><label>Type de circuit<select id="workflowType"><option value="approval">Validation — toutes les signatures sont nécessaires</option><option value="acknowledgement">Prise de connaissance — accusé individuel</option></select></label><label>Envoi du PDF signé<select id="completionMode"><option value="all_after_complete">Après la dernière signature, à tous les participants</option><option value="signer_after_each">Après chaque prise de connaissance, à la personne</option><option value="manual">Aucun envoi automatique</option></select></label><label>Autres personnes en copie à la fin (facultatif)<textarea id="completionRecipients" rows="2" maxlength="4000" placeholder="Une ou plusieurs adresses séparées par une virgule"></textarea></label><label class="check"><input id="requireFullRead" type="checkbox" checked>Chaque signataire doit consulter toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" checked>Inscrire le nom et la fonction avec la signature dans le PDF</label><button class="btn primary">Importer et préparer →</button></form></section><section class="card"><div class="row between"><h2>Mes documents</h2><label class="sr-only" for="filter">Rechercher</label><input id="filter" class="search" placeholder="Rechercher un document…"></div><div id="documentList"></div></section></div></main>`,
   );
   const list = () => {
     $("#documentList").innerHTML =
@@ -353,6 +362,12 @@ async function dashboard() {
       $("#docName").value =
         e.target.files[0]?.name.replace(/\.pdf$/i, "") || "";
   };
+  $("#workflowType").onchange = (e) => {
+    $("#completionMode").value =
+      e.target.value === "acknowledgement"
+        ? "signer_after_each"
+        : "all_after_complete";
+  };
   $("#uploadForm").onsubmit = (e) => {
     e.preventDefault();
     busy(e.submitter, createDocument);
@@ -361,8 +376,22 @@ async function dashboard() {
 async function createDocument() {
   const file = $("#file").files[0],
     name = $("#docName").value.trim(),
-    source_ref = $("#sourceRef").value.trim();
+    source_ref = $("#sourceRef").value.trim(),
+    workflow_type = $("#workflowType").value,
+    completion_mode = $("#completionMode").value,
+    completion_recipients = $("#completionRecipients")
+      .value.split(/[;,\n]+/)
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+    require_full_read = $("#requireFullRead").checked,
+    identity_stamp = $("#identityStamp").checked;
   if (!file || !name) throw new Error("Choisissez un PDF et un nom.");
+  if (
+    completion_recipients.some(
+      (email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+    )
+  )
+    throw new Error("Une adresse de copie finale est invalide.");
   if (file.size > 20 * 1024 * 1024) throw new Error("Le PDF dépasse 20 Mo.");
   const bytes = await file.arrayBuffer();
   if (!new TextDecoder().decode(bytes.slice(0, 1024)).includes("%PDF-"))
@@ -381,6 +410,11 @@ async function createDocument() {
     source_ref,
     status: "draft",
     signing_mode: "parallel",
+    workflow_type,
+    completion_mode,
+    completion_recipients,
+    require_full_read,
+    identity_stamp,
     page_count: pdf.numPages,
     storage_path,
     current_storage_path: storage_path,
@@ -422,7 +456,7 @@ async function openDocument(id) {
   const result = await Promise.all([
     supabase
       .from("signatureflow_signers")
-      .select("id,document_id,name,email,role,signing_order,status,signed_at")
+      .select("id,document_id,name,email,role,signing_order,status,signed_at,copy_sent_at")
       .eq("document_id", id)
       .order("signing_order"),
     supabase
@@ -436,6 +470,10 @@ async function openDocument(id) {
       .eq("document_id", id)
       .order("created_at", { ascending: false })
       .limit(500),
+    supabase
+      .from("signatureflow_contacts")
+      .select("*")
+      .order("name"),
   ]);
   const blob = check(
       await supabase.storage
@@ -452,6 +490,7 @@ async function openDocument(id) {
   S.signers = check(result[0]);
   S.fields = check(result[1]).map((f) => ({ ...f, confirmed: true }));
   S.audit = check(result[2]);
+  S.contacts = check(result[3]);
   S.page = 1;
   S.selected = null;
   S.links = [];
@@ -479,13 +518,22 @@ function kindOptions(current = "signature") {
 }
 function editor() {
   const edit = editable();
+  const contactOptions =
+      '<option value="">Saisie manuelle…</option>' +
+      S.contacts
+        .map(
+          (contact) =>
+            `<option value="${contact.id}">${esc(contact.name)} · ${esc(contact.role || contact.email)}</option>`,
+        )
+        .join(""),
+    completionRecipients = (S.doc.completion_recipients || []).join(", ");
   shell(
-    `<main class="editor-shell"><div class="editor-heading"><button class="btn secondary" id="back">← Documents</button><div><h1>${esc(S.doc.name)}</h1><p class="small muted">${esc(S.doc.source_ref || "")} <span class="pill ${S.doc.status}">${statusNames[S.doc.status]}</span></p></div><div class="row"><button class="btn secondary" id="download">↓ PDF</button>${!S.demo ? '<button class="btn secondary" id="refresh">Actualiser</button>' : ""}</div></div><div class="editor-grid"><aside class="card preparation stack"><span class="eyebrow">01 · LES DESTINATAIRES</span><h2>Qui doit signer ?</h2><div id="signerList" class="stack"></div>${edit ? `<form id="signerForm" class="stack"><label>Nom et prénom<input id="signerName" required maxlength="160"></label><label>E-mail<input id="signerEmail" required type="email" maxlength="254"></label><label>Rôle dans le document<input id="signerRole" placeholder="Ex. Responsable travaux" maxlength="100"></label><button class="btn secondary">+ Ajouter un signataire</button></form><hr><label>Ordre de signature<select id="signingMode"><option value="parallel" ${S.doc.signing_mode === "parallel" ? "selected" : ""}>Chacun peut signer dès réception</option><option value="sequential" ${S.doc.signing_mode === "sequential" ? "selected" : ""}>Dans l’ordre des signataires</option></select></label>` : '<p class="notice small">Le document est figé depuis la création des liens.</p>'}<hr><span class="eyebrow">03 · LE PARTAGE</span><button id="shareLinks" class="btn primary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>${S.doc.status === "draft" ? "Créer les liens personnels" : "Renouveler les liens"}</button><button id="emailLinks" class="btn secondary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>Envoyer les invitations par e-mail</button><div id="linkList" class="stack"></div>${S.demo ? '<p class="small muted">Connectez-vous pour enregistrer un dossier et faire signer votre document.</p>' : ""}${!S.demo && S.doc.status === "in_progress" ? '<button class="btn danger" id="cancelEnvelope">Annuler les liens de ce dossier</button>' : ""}</aside><section class="pdf-column"><div class="card toolbar"><div class="row"><button class="btn secondary icon" id="prev" aria-label="Page précédente">←</button><label class="page-control">Page <input id="pageInput" type="number" min="1" max="${S.pdf.numPages}" value="${S.page}"> / ${S.pdf.numPages}</label><button class="btn secondary icon" id="next" aria-label="Page suivante">→</button></div>${edit ? `<div class="row"><select id="ocrMode" aria-label="Mode OCR"><option value="auto">OCR si PDF scanné</option><option value="always">OCR sur toutes les pages</option><option value="never">Sans OCR</option></select><button class="btn primary" id="analyze">Analyser le PDF</button><button class="btn secondary" id="stopAnalysis" hidden>Arrêter</button></div>` : ""}</div><div id="analysisStatus" class="small muted" aria-live="polite"></div><div class="pdf-host" id="pdfHost"></div>${edit ? `<div class="card manual-tools"><span class="eyebrow">AJOUTER UNE ZONE</span><div class="row"><select id="manualSigner" aria-label="Signataire de la zone">${signerOptions()}</select><select id="manualKind" aria-label="Type de zone">${kindOptions()}</select><button class="btn secondary" id="place">+ Placer sur la page</button></div><p class="small muted">Cliquez sur le PDF, puis déplacez la zone ou étirez sa poignée. Sélectionnez une zone pour la modifier.</p></div>` : ""}</section><aside class="card review stack"><span class="eyebrow">02 · LES EMPLACEMENTS</span><div class="row between"><h2>Zones du document</h2><span id="zoneCount" class="pill"></span></div><div id="fieldList" class="stack"></div><div id="fieldDetail"></div>${edit ? '<button class="btn primary" id="save">Enregistrer les zones</button><div class="small muted" id="savedState">Zones enregistrées</div>' : ""}<hr><h3>Suivi du dossier</h3><div class="audit-list">${
+    `<main class="editor-shell"><div class="editor-heading"><button class="btn secondary" id="back">← Documents</button><div><h1>${esc(S.doc.name)}</h1><p class="small muted">${esc(S.doc.source_ref || "")} <span class="pill ${S.doc.status}">${statusNames[S.doc.status]}</span></p></div><div class="row"><button class="btn secondary" id="download">↓ PDF</button>${!S.demo ? '<button class="btn secondary" id="refresh">Actualiser</button>' : ""}</div></div><div class="editor-grid"><aside class="card preparation stack"><span class="eyebrow">01 · LES DESTINATAIRES</span><h2>Qui doit signer ?</h2><div id="signerList" class="stack"></div>${edit ? `<form id="signerForm" class="stack"><label>Contact enregistré<select id="savedContact">${contactOptions}</select></label><label>Nom et prénom<input id="signerName" required maxlength="160"></label><label>E-mail<input id="signerEmail" required type="email" maxlength="254"></label><label>Fonction dans le document<input id="signerRole" placeholder="Ex. Responsable travaux" maxlength="100"></label><label class="check"><input id="saveContact" type="checkbox" checked>Enregistrer ou actualiser ce contact</label><button class="btn secondary">+ Ajouter ce signataire</button></form><details class="contact-book"><summary>Carnet de contacts · ${S.contacts.length}</summary><div class="stack">${S.contacts.map((contact) => `<div class="contact-row"><span><strong>${esc(contact.name)}</strong><small>${esc(contact.role || contact.email)}</small></span><button class="remove-contact" data-contact="${contact.id}" aria-label="Supprimer ${esc(contact.name)}">×</button></div>`).join("") || '<p class="small muted">Aucun contact enregistré.</p>'}</div></details><hr><label>Ordre de signature<select id="signingMode"><option value="parallel" ${S.doc.signing_mode === "parallel" ? "selected" : ""}>Chacun peut signer dès réception</option><option value="sequential" ${S.doc.signing_mode === "sequential" ? "selected" : ""}>Dans l’ordre des signataires</option></select></label><label>Type de circuit<select id="workflowType"><option value="approval" ${S.doc.workflow_type !== "acknowledgement" ? "selected" : ""}>Validation complète</option><option value="acknowledgement" ${S.doc.workflow_type === "acknowledgement" ? "selected" : ""}>Prise de connaissance</option></select></label><label>Envoi automatique<select id="completionMode"><option value="all_after_complete" ${S.doc.completion_mode === "all_after_complete" ? "selected" : ""}>PDF final après toutes les signatures</option><option value="signer_after_each" ${S.doc.completion_mode === "signer_after_each" ? "selected" : ""}>Copie après chaque prise de connaissance</option><option value="manual" ${S.doc.completion_mode === "manual" ? "selected" : ""}>Envoi manuel uniquement</option></select></label><label>Copies finales supplémentaires<textarea id="completionRecipients" rows="2" maxlength="4000">${esc(completionRecipients)}</textarea></label><label class="check"><input id="requireFullRead" type="checkbox" ${S.doc.require_full_read !== false ? "checked" : ""}>Obliger la consultation de toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" ${S.doc.identity_stamp !== false ? "checked" : ""}>Inscrire nom et fonction avec la signature</label>` : '<p class="notice small">Le document est figé depuis la création des liens.</p>'}<hr><span class="eyebrow">03 · VALIDATION ET PARTAGE</span>${edit ? `<label class="check review-confirm"><input id="confirmPreparation" type="checkbox" ${S.doc.prepared_at ? "checked" : ""}>J’ai contrôlé l’intégralité du PDF, les noms, fonctions et emplacements</label>` : ""}<button id="shareLinks" class="btn primary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>${S.doc.status === "draft" ? "Valider et créer les liens" : "Renouveler les liens"}</button><button id="emailLinks" class="btn secondary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>Valider et envoyer les invitations</button><div id="linkList" class="stack"></div>${S.demo ? '<p class="small muted">Connectez-vous pour enregistrer un dossier et faire signer votre document.</p>' : ""}${!S.demo && S.doc.status === "in_progress" ? '<button class="btn danger" id="cancelEnvelope">Annuler les liens de ce dossier</button>' : ""}</aside><section class="pdf-column"><div class="card toolbar"><div class="row"><button class="btn secondary icon" id="prev" aria-label="Page précédente">←</button><label class="page-control">Page <input id="pageInput" type="number" min="1" max="${S.pdf.numPages}" value="${S.page}"> / ${S.pdf.numPages}</label><button class="btn secondary icon" id="next" aria-label="Page suivante">→</button></div>${edit ? `<div class="row"><select id="ocrMode" aria-label="Mode OCR"><option value="auto">OCR si PDF scanné</option><option value="always">OCR sur toutes les pages</option><option value="never">Sans OCR</option></select><button class="btn primary" id="analyze">Analyser le PDF</button><button class="btn secondary" id="stopAnalysis" hidden>Arrêter</button></div>` : ""}</div><div id="analysisStatus" class="small muted" aria-live="polite"></div><div class="pdf-host" id="pdfHost"></div>${edit ? `<div class="card manual-tools"><span class="eyebrow">AJOUTER UNE ZONE</span><div class="row"><select id="manualSigner" aria-label="Signataire de la zone">${signerOptions()}</select><select id="manualKind" aria-label="Type de zone">${kindOptions()}</select><button class="btn secondary" id="place">+ Placer sur la page</button></div><p class="small muted">Cliquez sur le PDF, puis déplacez la zone ou étirez sa poignée. Sélectionnez une zone pour la modifier.</p></div>` : ""}</section><aside class="card review stack"><span class="eyebrow">02 · LES EMPLACEMENTS</span><div class="row between"><h2>Zones du document</h2><span id="zoneCount" class="pill"></span></div><div id="fieldList" class="stack"></div><div id="fieldDetail"></div>${edit ? '<button class="btn primary" id="save">Enregistrer les zones</button><div class="small muted" id="savedState">Zones enregistrées</div>' : ""}<hr><h3>Suivi du dossier</h3><div class="audit-list">${
       S.audit
         .slice(0, 20)
         .map(
           (a) =>
-            `<div><strong>${esc({ document_signed: "Signature enregistrée", links_issued: "Liens créés", document_opened: "Document ouvert", invitation_sent: "Invitation envoyée", email_error: "Échec de l’envoi", document_cancelled: "Dossier annulé" }[a.event_type] || a.event_type)}</strong><small>${date(a.created_at)}</small></div>`,
+            `<div><strong>${esc({ document_signed: "Signature enregistrée", preparation_confirmed: "Préparation intégralement validée", links_issued: "Liens créés", document_opened: "Document ouvert", invitation_sent: "Invitation envoyée", email_error: "Échec de l’invitation", completion_copy_sent: "PDF signé envoyé automatiquement", completion_email_error: "Échec de l’envoi du PDF signé", document_cancelled: "Dossier annulé" }[a.event_type] || a.event_type)}</strong><small>${date(a.created_at)}</small></div>`,
         )
         .join("") ||
       '<p class="small muted">Les ouvertures et signatures apparaîtront ici.</p>'
@@ -548,10 +596,34 @@ function editor() {
   $("#next").onclick = () => goPage(S.page + 1);
   $("#pageInput").onchange = (e) => goPage(Number(e.target.value));
   if (edit) {
+    $("#savedContact").onchange = (e) => {
+      const contact = S.contacts.find((item) => item.id === e.target.value);
+      if (!contact) return;
+      $("#signerName").value = contact.name;
+      $("#signerEmail").value = contact.email;
+      $("#signerRole").value = contact.role || "";
+    };
     $("#signerForm").onsubmit = (e) => {
       e.preventDefault();
       busy(e.submitter, addSigner);
     };
+    document.querySelectorAll(".remove-contact").forEach(
+      (button) =>
+        (button.onclick = () =>
+          busy(button, async () => {
+            if (!confirm("Supprimer ce contact du carnet ?")) return;
+            check(
+              await supabase
+                .from("signatureflow_contacts")
+                .delete()
+                .eq("id", button.dataset.contact),
+            );
+            S.contacts = S.contacts.filter(
+              (contact) => contact.id !== button.dataset.contact,
+            );
+            editor();
+          })),
+    );
     $("#signingMode").onchange = (e) =>
       busy(null, async () => {
         const signing_mode = e.target.value;
@@ -563,7 +635,53 @@ function editor() {
               .eq("id", S.doc.id),
           );
         S.doc.signing_mode = signing_mode;
+        S.doc.prepared_at = null;
+        if ($("#confirmPreparation")) $("#confirmPreparation").checked = false;
       });
+    const saveWorkflow = async () => {
+      const completion_recipients = $("#completionRecipients")
+        .value.split(/[;,\n]+/)
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+      if (
+        completion_recipients.some(
+          (email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+        )
+      )
+        throw new Error("Une adresse de copie finale est invalide.");
+      const settings = {
+        workflow_type: $("#workflowType").value,
+        completion_mode: $("#completionMode").value,
+        completion_recipients,
+        require_full_read: $("#requireFullRead").checked,
+        identity_stamp: $("#identityStamp").checked,
+      };
+      if (!S.demo)
+        check(
+          await supabase
+            .from("signatureflow_documents")
+            .update(settings)
+            .eq("id", S.doc.id),
+        );
+      Object.assign(S.doc, settings, { prepared_at: null });
+      $("#confirmPreparation").checked = false;
+      notify("Configuration du circuit enregistrée.", "success");
+    };
+    $("#workflowType").onchange = (e) => {
+      $("#completionMode").value =
+        e.target.value === "acknowledgement"
+          ? "signer_after_each"
+          : "all_after_complete";
+      busy(null, saveWorkflow);
+    };
+    [
+      "#completionMode",
+      "#completionRecipients",
+      "#requireFullRead",
+      "#identityStamp",
+    ].forEach((selector) => {
+      $(selector).onchange = () => busy(null, saveWorkflow);
+    });
     $("#analyze").onclick = (e) => busy(e.target, runAnalysis);
     $("#stopAnalysis").onclick = () => analysisController?.abort();
     $("#save").onclick = (e) => busy(e.target, saveFields);
@@ -606,7 +724,7 @@ function drawSigners() {
     S.signers
       .map(
         (s, i) =>
-          `<div class="signer-item" style="--signer-color:${["#3563e9", "#a34ab9", "#168476", "#b2781c"][i % 4]}"><span class="avatar">${esc(s.name.slice(0, 1))}</span><div><strong>${esc(s.name)}</strong><small>${esc(s.role || s.email)}</small><span class="small">${i + 1} · ${statusNames[s.status || "pending"]}</span></div>${editable() ? `<button class="remove-signer" data-id="${s.id}" aria-label="Retirer ${esc(s.name)}">×</button>` : ""}</div>`,
+          `<div class="signer-item" style="--signer-color:${["#3563e9", "#a34ab9", "#168476", "#b2781c"][i % 4]}"><span class="avatar">${esc(s.name.slice(0, 1))}</span><div><strong>${esc(s.name)}</strong><small>${esc(s.role || s.email)}</small><span class="small">${i + 1} · ${statusNames[s.status || "pending"]}${s.copy_sent_at ? " · copie envoyée" : ""}</span></div>${editable() ? `<button class="remove-signer" data-id="${s.id}" aria-label="Retirer ${esc(s.name)}">×</button>` : ""}</div>`,
       )
       .join("") ||
     '<p class="small muted">Ajoutez les personnes qui doivent lire et signer ce document.</p>';
@@ -636,6 +754,38 @@ async function addSigner() {
     throw new Error("Cette adresse figure déjà dans les signataires.");
   if (S.signers.length >= 40)
     throw new Error("Un dossier est limité à 40 signataires.");
+  if (!role)
+    throw new Error(
+      "Renseignez la fonction de la personne pour l’identifier précisément dans le document.",
+    );
+  if ($("#saveContact")?.checked) {
+    const existing = S.contacts.find(
+      (contact) => contact.email.toLowerCase() === email,
+    );
+    if (!S.demo) {
+      if (existing)
+        check(
+          await supabase
+            .from("signatureflow_contacts")
+            .update({ name, role, updated_at: new Date().toISOString() })
+            .eq("id", existing.id),
+        );
+      else {
+        const saved = check(
+          await supabase
+            .from("signatureflow_contacts")
+            .insert({ owner_id: S.session.user.id, name, email, role })
+            .select()
+            .single(),
+        );
+        S.contacts.push(saved);
+      }
+    }
+    if (existing) Object.assign(existing, { name, role });
+    else if (S.demo)
+      S.contacts.push({ id: uuid(), owner_id: "demo", name, email, role });
+    S.contacts.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  }
   const signer = {
     id: uuid(),
     document_id: S.doc.id,
@@ -647,6 +797,7 @@ async function addSigner() {
   if (!S.demo)
     check(await supabase.from("signatureflow_signers").insert(signer));
   S.signers.push({ ...signer, status: "pending" });
+  S.doc.prepared_at = null;
   editor();
 }
 function goPage(p) {
@@ -998,7 +1149,18 @@ async function saveFields() {
 }
 async function issueLinks(delivery) {
   if (S.demo) return;
-  if (editable()) await saveFields();
+  if (editable()) {
+    if (!$("#confirmPreparation")?.checked)
+      throw new Error(
+        "Confirmez avoir contrôlé toutes les pages, les identités et les emplacements avant l’envoi.",
+      );
+    await saveFields();
+    S.doc.prepared_at = check(
+      await supabase.rpc("signatureflow_confirm_preparation", {
+        p_document: S.doc.id,
+      }),
+    );
+  }
   else if (
     !confirm(
       "Renouveler les liens des signataires en attente ? Leurs anciens liens seront désactivés.",
@@ -1025,7 +1187,7 @@ function renderLinks() {
   $("#linkList").innerHTML = S.links
     .map(
       (l, i) =>
-        `<div class="link-card stack"><strong>${esc(l.name)}</strong><small>${esc(l.email)}</small><span class="small ${l.error ? "error" : "muted"}">${esc(l.error || (l.sent ? "Invitation envoyée" : "Lien prêt"))} · expire le ${date(l.expires)}</span><div class="row"><button class="btn secondary" data-copy="${i}">Copier</button><button class="btn secondary" data-share="${i}">Partager</button><a class="btn secondary" href="${esc("mailto:" + l.email + "?subject=" + encodeURIComponent("Document à signer — " + S.doc.name) + "&body=" + encodeURIComponent(`Bonjour ${l.name},\nMerci de lire et signer « ${S.doc.name} » via votre lien personnel :\n${l.url}\nCe lien est valable 14 jours.`))}">E-mail</a></div></div>`,
+        `<div class="link-card stack"><strong>${esc(l.name)}</strong><small>${esc(l.role || "Signataire")} · ${esc(l.email)}</small><span class="small ${l.error ? "error" : "muted"}">${esc(l.error || (l.sent ? "Invitation envoyée" : "Lien prêt"))} · expire le ${date(l.expires)}</span><div class="row"><button class="btn secondary" data-copy="${i}">Copier</button><button class="btn secondary" data-share="${i}">Partager</button><a class="btn secondary" href="${esc("mailto:" + l.email + "?subject=" + encodeURIComponent("Document à signer — " + S.doc.name) + "&body=" + encodeURIComponent(`Bonjour ${l.name},\nVous êtes identifié comme ${l.role || "signataire"}.\nMerci de consulter et signer « ${S.doc.name} » via votre lien personnel :\n${l.url}\nCe lien est valable 14 jours.`))}">E-mail</a></div></div>`,
     )
     .join("");
   document.querySelectorAll("[data-copy]").forEach(
@@ -1080,11 +1242,17 @@ async function signingPage(token) {
     $("#exitSigning").onclick = exitSigning;
     return;
   }
-  const already = data.signer.status === "signed";
+  const already = data.signer.status === "signed",
+    viewedPages = new Set(),
+    identity = `${data.signer.name}${data.signer.role ? ` · ${data.signer.role}` : ""}`,
+    consentText =
+      data.document.workflowType === "acknowledgement"
+        ? `Je confirme avoir consulté l’intégralité du document « ${esc(data.document.name)} » et en avoir pris connaissance.`
+        : `Je confirme avoir consulté l’intégralité du document « ${esc(data.document.name)} » et j’accepte d’y apposer cette signature électronique.`;
   shell(
-    `<main class="sign-page stack"><section class="card sign-intro"><div><span class="eyebrow">${already ? "SIGNATURE ENREGISTRÉE" : "VOTRE DOCUMENT À SIGNER"}</span><h1>${esc(data.document.name)}</h1><p>Bonjour <strong>${esc(data.signer.name)}</strong>. ${already ? "Votre signature a bien été enregistrée." : "Prenez connaissance du document avant de signer."}</p></div><button class="btn secondary" id="exitSigning">Quitter</button></section>${data.blocked ? '<div class="warning">Un signataire précédent doit encore signer. Vous pouvez lire le document et revenir avec ce même lien.<button class="btn secondary" id="retry">Actualiser</button></div>' : ""}<section class="card stack"><div class="row between"><div class="row"><button class="btn secondary" id="signPrev">←</button><strong id="signPageLabel"></strong><button class="btn secondary" id="signNext">→</button></div><a class="btn secondary" href="${esc(data.document.signedUrl)}" target="_blank" rel="noopener noreferrer">Ouvrir le PDF ↗</a></div><div id="signPdfHost" class="pdf-host"></div><button class="btn secondary" id="nextZone">Aller à ma prochaine zone ↓</button></section>${
+    `<main class="sign-page stack"><section class="card sign-intro"><div><span class="eyebrow">${already ? "SIGNATURE ENREGISTRÉE" : data.document.workflowType === "acknowledgement" ? "PRISE DE CONNAISSANCE" : "VOTRE DOCUMENT À SIGNER"}</span><h1>${esc(data.document.name)}</h1><div class="signer-identity"><span class="avatar">${esc(data.signer.name.slice(0, 1))}</span><span><strong>${esc(data.signer.name)}</strong><small>${esc(data.signer.role || "Fonction non précisée")} · ${esc(data.signer.email)}</small></span></div><p>${already ? "Votre signature a bien été enregistrée." : "Votre nom et votre fonction sont déjà associés aux zones qui vous sont attribuées."}</p></div><button class="btn secondary" id="exitSigning">Quitter</button></section>${data.blocked ? '<div class="warning">Un signataire précédent doit encore signer. Vous pouvez lire le document et revenir avec ce même lien.<button class="btn secondary" id="retry">Actualiser</button></div>' : ""}<section class="card stack"><div class="row between"><div class="row"><button class="btn secondary" id="signPrev">←</button><strong id="signPageLabel"></strong><button class="btn secondary" id="signNext">→</button></div><a class="btn secondary" href="${esc(data.document.signedUrl)}" target="_blank" rel="noopener noreferrer">Ouvrir le PDF</a></div><div class="reading-progress"><span id="readingProgress">Pages consultées : 0 / ${data.document.pageCount}</span><progress id="readingBar" max="${data.document.pageCount}" value="0"></progress></div><div id="signPdfHost" class="pdf-host"></div><button class="btn secondary" id="nextZone">Aller à ma prochaine zone</button></section>${
       !already && !data.blocked
-        ? `<section class="card stack" id="signForm"><span class="eyebrow">À VOUS DE SIGNER</span><h2>Votre signature</h2><label>Nom et prénom<input id="typedName" value="${esc(data.signer.name)}" required maxlength="160" autocomplete="name"></label>${data.fields
+        ? `<section class="card stack" id="signForm"><span class="eyebrow">À VOUS DE SIGNER</span><h2>${esc(identity)}</h2><p class="notice small">Le nom et la fonction ci-dessus seront inscrits avec votre signature dans le PDF.</p><label>Identité attribuée<input id="typedName" value="${esc(data.signer.name)}" required readonly maxlength="160" autocomplete="name"></label>${data.fields
             .filter((f) => ["text", "checkbox"].includes(f.kind))
             .map((f) =>
               f.kind === "checkbox"
@@ -1093,7 +1261,7 @@ async function signingPage(token) {
             )
             .join(
               "",
-            )}<label>Tracez votre signature<div class="signature-box"><canvas id="signatureCanvas" aria-label="Zone de dessin de la signature"></canvas></div></label><button class="btn secondary fit" id="clearSignature">Effacer la signature</button>${data.fields.some((f) => f.kind === "initials") ? '<label>Tracez vos initiales<div class="signature-box"><canvas id="initialsCanvas" aria-label="Zone de dessin des initiales"></canvas></div></label><button class="btn secondary fit" id="clearInitials">Effacer les initiales</button>' : ""}<label class="check consent"><input id="consent" type="checkbox"><span>Je confirme avoir pris connaissance du document « ${esc(data.document.name)} » et j’accepte d’y apposer cette signature électronique dans les zones qui me sont attribuées.</span></label><button class="btn primary" id="submitSignature">Confirmer et signer le document →</button><p class="small muted">Cette signature utilise le lien personnel envoyé à ${esc(data.signer.email)} et votre consentement. Elle ne comporte pas de vérification de pièce d’identité.</p></section>`
+            )}<label>Tracez votre signature<div class="signature-box"><canvas id="signatureCanvas" aria-label="Zone de dessin de la signature"></canvas></div></label><button class="btn secondary fit" id="clearSignature">Effacer la signature</button>${data.fields.some((f) => f.kind === "initials") ? '<label>Tracez vos initiales<div class="signature-box"><canvas id="initialsCanvas" aria-label="Zone de dessin des initiales"></canvas></div></label><button class="btn secondary fit" id="clearInitials">Effacer les initiales</button>' : ""}<label class="check consent"><input id="consent" type="checkbox"><span>${consentText}</span></label><button class="btn primary" id="submitSignature" ${data.document.requireFullRead ? "disabled" : ""}>${data.document.workflowType === "acknowledgement" ? "Confirmer ma prise de connaissance" : "Confirmer et signer le document"}</button><p class="small muted">Cette signature utilise le lien personnel envoyé à ${esc(data.signer.email)} et votre consentement. Elle ne comporte pas de vérification de pièce d’identité.</p></section>`
         : already
           ? '<div class="success">Votre signature est enregistrée. Le PDF accessible ci-dessus contient la dernière version disponible.</div>'
           : ""
@@ -1116,6 +1284,16 @@ async function signingPage(token) {
   let pageNum = 1,
     zoneIndex = -1,
     signRender = 0;
+  const updateReading = () => {
+    if ($("#readingProgress"))
+      $("#readingProgress").textContent = data.document.requireFullRead
+        ? `Pages consultées : ${viewedPages.size} / ${pdf.numPages}`
+        : `Lecture intégrale recommandée · ${viewedPages.size} / ${pdf.numPages}`;
+    if ($("#readingBar")) $("#readingBar").value = viewedPages.size;
+    if ($("#submitSignature"))
+      $("#submitSignature").disabled =
+        data.document.requireFullRead && viewedPages.size < pdf.numPages;
+  };
   const draw = async () => {
     const seq = ++signRender,
       page = await pdf.getPage(pageNum),
@@ -1144,6 +1322,8 @@ async function signingPage(token) {
       transform: [dpr, 0, 0, dpr, 0, 0],
     }).promise;
     if (seq !== signRender) return;
+    viewedPages.add(pageNum);
+    updateReading();
     data.fields
       .filter((f) => f.page === pageNum)
       .forEach((f) => {
@@ -1155,7 +1335,10 @@ async function signingPage(token) {
           width: f.width * 100 + "%",
           height: f.height * 100 + "%",
         });
-        o.textContent = kinds[f.kind];
+        o.textContent =
+          f.kind === "signature" || f.kind === "initials"
+            ? `${data.signer.name}${data.signer.role ? ` · ${data.signer.role}` : ""}`
+            : kinds[f.kind];
         o.onclick = () =>
           $("#signForm")?.scrollIntoView({ behavior: "smooth" });
         stage.append(o);
@@ -1231,6 +1414,10 @@ async function signingPage(token) {
   const requestId = uuid();
   $("#submitSignature").onclick = (e) =>
     busy(e.target, async () => {
+      if (data.document.requireFullRead && viewedPages.size < pdf.numPages)
+        throw new Error(
+          `Consultez toutes les pages avant de signer (${viewedPages.size}/${pdf.numPages}).`,
+        );
       if (pad.isEmpty() || (initialPad && initialPad.isEmpty()))
         throw new Error(
           "Tracez votre signature et vos initiales si demandées.",
@@ -1262,9 +1449,10 @@ async function signingPage(token) {
         signatureDataUrl: pad.toDataURL("image/png"),
         initialsDataUrl: initialPad?.toDataURL("image/png"),
         values,
+        readPages: [...viewedPages].sort((a, b) => a - b),
       });
       shell(
-        `<main class="sign-page"><section class="card signed-result stack"><span class="result-check">✓</span><span class="eyebrow">C’EST SIGNÉ</span><h1>Merci, ${esc(data.signer.name)}.</h1><p>Votre signature a été enregistrée sur « ${esc(data.document.name)} ».</p>${result.downloadUrl ? `<a class="btn primary" href="${esc(result.downloadUrl)}" target="_blank" rel="noopener noreferrer">Télécharger le PDF signé ↓</a>` : ""}<button class="btn secondary" id="showSigned">Voir la dernière version</button><details><summary>Empreinte du document</summary><p class="hash">${esc(result.sha256)}</p></details><button class="btn secondary" id="exitSigning">Fermer</button></section></main>`,
+        `<main class="sign-page"><section class="card signed-result stack"><span class="result-check">✓</span><span class="eyebrow">${data.document.workflowType === "acknowledgement" ? "PRISE DE CONNAISSANCE ENREGISTRÉE" : "C’EST SIGNÉ"}</span><h1>Merci, ${esc(data.signer.name)}.</h1><p>Votre signature nominative a été enregistrée sur « ${esc(data.document.name)} ».</p>${result.delivery?.sent ? `<p class="success">${result.delivery.sent} copie(s) automatique(s) envoyée(s).</p>` : ""}${result.delivery?.failed ? `<p class="warning">La signature est valide, mais ${result.delivery.failed} envoi(s) automatique(s) ont échoué. L’organisateur devra transmettre la copie manuellement.</p>` : ""}${result.downloadUrl ? `<a class="btn primary" href="${esc(result.downloadUrl)}" target="_blank" rel="noopener noreferrer">Télécharger le PDF signé</a>` : ""}<button class="btn secondary" id="showSigned">Voir la dernière version</button><details><summary>Empreinte du document</summary><p class="hash">${esc(result.sha256)}</p></details><button class="btn secondary" id="exitSigning">Fermer</button></section></main>`,
       );
       $("#exitSigning").onclick = exitSigning;
       $("#showSigned").onclick = () => signingPage(token);

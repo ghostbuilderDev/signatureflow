@@ -6,6 +6,7 @@ import {
   detectRules,
   groupLines,
   deduplicate,
+  isLikelyTableOfContents,
 } from "../src/lib/detection-core.js";
 const token = (text, x = 0.1, y = 0.5, width = 0.12, height = 0.015) => ({
   text,
@@ -42,6 +43,37 @@ test("reassembles split text without merging distant columns", () => {
     groupLines([token("Signature", 0.1), token("Signature", 0.65)]).length,
     2,
   );
+});
+test("ignores signature words in a table of contents but keeps a structured named block", () => {
+  const summary = [
+    token("SOMMAIRE", 0.1, 0.08, 0.2),
+    token("1 Présentation ........ 2", 0.1, 0.16, 0.5),
+    token("2 Organisation ........ 5", 0.1, 0.22, 0.5),
+    token("3 Signatures ........ 12", 0.1, 0.28, 0.5),
+  ];
+  assert.equal(isLikelyTableOfContents(groupLines(summary)), true);
+  assert.equal(
+    detectFromLayout({ page: 1, tokens: summary, signers: [] }).length,
+    0,
+  );
+  const named = detectFromLayout({
+    page: 2,
+    tokens: [
+      token("Nom et prénom : Alice Dupont", 0.1, 0.5, 0.32),
+      token("Fonction : Responsable travaux", 0.1, 0.53, 0.34),
+      token("Signature", 0.1, 0.57, 0.12),
+    ],
+    rules: [{ x: 0.1, y: 0.68, width: 0.35, height: 0.002 }],
+    signers: [
+      {
+        id: "alice",
+        name: "Alice Dupont",
+        role: "Responsable travaux",
+      },
+    ],
+  });
+  assert.equal(named.length, 1);
+  assert.equal(named[0].suggested_signer_id, "alice");
 });
 test("detects two signature blocks, native widgets, no arbitrary signer assignment", () => {
   const tokens = [

@@ -26,6 +26,12 @@ test("migration, RLS, atomic save, concurrent lease, hash checks and cancellatio
     ),
   );
   await db.exec(
+    await readFile(
+      "supabase/migrations/20261120111204_signatureflow_v3_named_workflows_contacts.sql",
+      "utf8",
+    ),
+  );
+  await db.exec(
     `insert into auth.users values('${u}'),('${other}'); set role authenticated;select set_config('request.jwt.claim.sub','${u}',false);`,
   );
   await db.exec(
@@ -46,6 +52,9 @@ test("migration, RLS, atomic save, concurrent lease, hash checks and cancellatio
     doc,
     JSON.stringify(fields),
   ]);
+  await db.exec(
+    `insert into signatureflow_contacts(owner_id,name,email,role) values('${u}','Alice Dupont','alice@example.fr','Responsable travaux');`,
+  );
   await assert.rejects(
     db.query("select signatureflow_save_fields($1,$2)", [
       doc,
@@ -67,6 +76,11 @@ test("migration, RLS, atomic save, concurrent lease, hash checks and cancellatio
     0,
     "other owner cannot read",
   );
+  assert.equal(
+    (await db.query("select * from signatureflow_contacts")).rows.length,
+    0,
+    "other owner cannot read contacts",
+  );
   await assert.rejects(
     db.query("select signatureflow_claim($1,$2,$3,$4)", [
       "abc",
@@ -75,7 +89,9 @@ test("migration, RLS, atomic save, concurrent lease, hash checks and cancellatio
       "h",
     ]),
   );
-  await db.exec(`reset role;set role service_role;`);
+  await db.exec(
+    `reset role;set role authenticated;select set_config('request.jwt.claim.sub','${u}',false);select signatureflow_confirm_preparation('${doc}');reset role;set role service_role;`,
+  );
   const links = [a, b].map((id, i) => ({
     id,
     hash: "hash" + i,
