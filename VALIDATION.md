@@ -1,4 +1,6 @@
-# SignatureFlow 2.0 — vérifications du 20 novembre 2026
+# SignatureFlow 2.0.1 — vérifications du 20 novembre 2026
+
+Correctif : police de test OCR explicite, assertions originales conservées ; authentification par mot de passe et récupération ; callbacks Auth additifs ; contrôle du résultat des workflows et du commit publié. 12 tests Node, 4 tests Deno et compilation de production réussis pour cette révision. La nouvelle révision n’est pas encore publiée sur le dépôt distant : l’installeur Termux réalise cette étape avec l’authentification du propriétaire. Les envois de récupération et une connexion avec les identifiants réels ne sont pas testés ici.
 
 Livraison réalisée à partir de `signatureflow-main.zip` (V1.1.1), sans modification d’un service distant et sans envoi réel à un destinataire.
 
@@ -28,4 +30,4 @@ Les quatre tests de fonctions exécutent les vrais gestionnaires Deno avec des r
 - Essayer les formulaires réellement utilisés dans vos chantiers. Aucun document métier n’a été fourni pour mesurer le taux de détection ou la précision sur votre collection.
 - La passerelle JDC est fournie et documentée ; le code du Journal n’étant pas joint, son interface n’a pas été modifiée.
 
-Le ZIP contient les sources, les migrations, les ressources OCR, un dossier compilé `dist/`, les scripts Termux et les procédures. Le déploiement réel est déclenché par les scripts, après authentification GitHub et configuration des secrets nécessaires.
+Le ZIP 2.0.1 contient les sources, les migrations, les scripts Termux et les procédures. `npm ci` prépare les ressources OCR et les polices ; GitHub Actions compile l’interface. Le déploiement réel est déclenché par les scripts, après authentification GitHub et configuration des secrets nécessaires.

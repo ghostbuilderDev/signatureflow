@@ -11,6 +11,11 @@ export default defineConfig({
       : {},
   },
   webServer: {
+    env: {
+      VITE_SUPABASE_URL: "https://signatureflow-test.supabase.co",
+      VITE_SUPABASE_PUBLISHABLE_KEY: "test-public-key",
+      VITE_APP_URL: "http://127.0.0.1:5173/",
+    },
     command: "npm run dev -- --host 127.0.0.1 --port 5173",
     url: "http://127.0.0.1:5173",
     reuseExistingServer: true,

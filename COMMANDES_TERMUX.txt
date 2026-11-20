@@ -1,12 +1,17 @@
-SIGNATUREFLOW 2.0 — MISE À JOUR DU DÉPÔT EXISTANT
+SIGNATUREFLOW 2.0.1 — CONNEXION ET PUBLICATION VÉRIFIÉE
 
-Télécharger SIGNATUREFLOW-V2.0-TERMUX.zip dans Téléchargements, puis coller :
+Télécharger SIGNATUREFLOW-V2.0.1-TERMUX.zip dans Téléchargements, puis coller :
 
 termux-setup-storage
 pkg install -y unzip
 SF_STAGE="$(mktemp -d "$HOME/signatureflow-v2.XXXXXX")"
-unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.0-TERMUX.zip" -d "$SF_STAGE"
+unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.0.1-TERMUX.zip" -d "$SF_STAGE" &&
 bash "$SF_STAGE/signatureflow-main/update-termux.sh"
+
+Attendre le message SUCCÈS avec la version 2.0.1 et le lien à ouvrir.
+La commande signale un échec et donne le journal GitHub si la publication échoue.
+Après une erreur de déploiement, relancer seulement :
+cd "$HOME/signatureflow" && bash deploy-and-verify.sh
 
 Par défaut : dépôt GitHub signatureflow, dossier ~/signatureflow.
 Pour un autre emplacement :

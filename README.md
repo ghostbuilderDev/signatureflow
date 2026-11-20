@@ -1,4 +1,16 @@
-# SignatureFlow 2.0 — préparation et signature de PDF
+# SignatureFlow 2.0.1 — préparation et signature de PDF
+
+## Correctif connexion et publication (20 novembre 2026)
+
+La V2 avait été poussée sur GitHub mais le workflow `Deploy Supabase` 44666256130 s’était arrêté sur `npm test` : le test OCR échouait avant les migrations et la publication de l’interface. GitHub Pages servait donc toujours la V1.1.1. Le test utilise désormais les polices Liberation livrées avec PDF.js au lieu d’une police système variable ; ses assertions de détection sont conservées.
+
+Connexion principale par e-mail et mot de passe du compte JDC existant. Bouton pour afficher le mot de passe, récupération/définition du mot de passe et lien magique facultatif. Aucun compte n’est créé automatiquement. Modifier ce mot de passe modifie aussi le compte JDC. Les signataires conservent leur accès personnel sans connexion.
+
+Le workflow ajoute les deux URL de retour de SignatureFlow à la liste des redirections Auth en conservant les entrées et l’URL principale de JDC. Le token Supabase doit autoriser la lecture et l’écriture de la configuration Auth. Une erreur de droits est affichée par la commande ; aucun secret ne doit être envoyé dans cette conversation.
+
+`update-termux.sh` pousse le correctif puis `deploy-and-verify.sh` attend les deux workflows, retourne une erreur si l’un échoue, et contrôle `version.json` ainsi que le commit réellement servi. Le cache PWA est renouvelé automatiquement. Le ZIP contient les sources ; les dépendances et ressources OCR sont installées et compilées par GitHub Actions.
+
+Installation : télécharger `SIGNATUREFLOW-V2.0.1-TERMUX.zip`, puis exécuter les commandes de `COMMANDES_TERMUX.txt`. L’installeur direct transmis avec le ZIP permet aussi l’installation sans téléchargement manuel. Ne pas réutiliser l’ancien installeur V2.0.
 
 Mise à jour du projet fourni (V1.1.1). Interface française pour préparer des PDF, attribuer des emplacements à plusieurs personnes et recueillir leurs signatures par liens personnels, sans compte destinataire.
 
@@ -21,13 +33,13 @@ Mise à jour du projet fourni (V1.1.1). Interface française pour préparer des 
 
 ## Mise à jour avec Termux
 
-Télécharger `SIGNATUREFLOW-V2.0-TERMUX.zip` dans **Téléchargements**, puis :
+Télécharger `SIGNATUREFLOW-V2.0.1-TERMUX.zip` dans **Téléchargements**, puis :
 
 ```bash
 termux-setup-storage
 pkg install -y unzip
 SF_STAGE="$(mktemp -d "$HOME/signatureflow-v2.XXXXXX")"
-unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.0-TERMUX.zip" -d "$SF_STAGE"
+unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.0.1-TERMUX.zip" -d "$SF_STAGE"
 bash "$SF_STAGE/signatureflow-main/update-termux.sh"
 ```
 
@@ -144,7 +156,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-`npm ci` prépare les ressources OCR et les polices. Pour un aperçu compilé déjà livré, servir le dossier `dist/` par HTTPS. Les liens de signature et l’enregistrement exigent le backend configuré et déployé ; ouvrir simplement `index.html` par `file://` ne suffit pas.
+`npm ci` prépare les ressources OCR et les polices. `npm run build` génère le dossier `dist/` à servir par HTTPS. Les liens de signature et l’enregistrement exigent le backend configuré et déployé ; ouvrir simplement `index.html` par `file://` ne suffit pas.
 
 La version compilée de l’archive utilise la clé publique déjà fournie avec le projet et déduit son URL depuis la page courante. Les workflows reconstruisent avec les secrets GitHub.
 

@@ -19,6 +19,14 @@ const supabase =
     ? createClient(
         import.meta.env.VITE_SUPABASE_URL,
         import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        {
+          auth: {
+            storageKey: "signatureflow-auth",
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+          },
+        },
       )
     : null;
 const app = document.querySelector("#app"),
@@ -93,7 +101,7 @@ function shell(content, right = "") {
     p._observer?.disconnect();
   });
   pads = [];
-  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.0</span></div></header>${content}`;
+  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.0.1</span></div></header>${content}`;
 }
 async function busy(button, fn) {
   if (button?.disabled) return;
@@ -150,6 +158,11 @@ window.addEventListener("unhandledrejection", (e) =>
   notify(e.reason?.message || "Opération interrompue", "error"),
 );
 async function boot() {
+  const authParams = new URLSearchParams(location.hash.slice(1));
+  S.recovering = authParams.get("type") === "recovery";
+  const authError =
+    authParams.get("error_description") ||
+    new URLSearchParams(location.search).get("error_description");
   const token =
     new URLSearchParams(location.hash.slice(1)).get("sign") ||
     new URLSearchParams(location.search).get("sign");
@@ -169,37 +182,117 @@ async function boot() {
   supabase.auth.onAuthStateChange((_e, session) => {
     const previous = S.session?.user.id;
     S.session = session;
+    if (S.authSubmitting) return;
+    if (_e === "PASSWORD_RECOVERY") {
+      S.recovering = true;
+      setTimeout(() => passwordRecovery(), 0);
+      return;
+    }
+    if (S.recovering) return;
     if (session?.user.id && session.user.id !== previous && !S.demo)
       setTimeout(() => dashboard().catch((e) => notify(e.message, "error")), 0);
     if (!session && previous && !S.demo) login();
   });
-  if (S.session) await dashboard();
+  if (S.recovering && S.session) passwordRecovery();
+  else if (S.session) await dashboard();
   else login();
+  if (authError)
+    notify(
+      "Ce lien de connexion est invalide ou expiré. Connectez-vous avec votre mot de passe ou demandez un nouveau lien.",
+      "error",
+    );
 }
 function login() {
   shell(
-    `<main class="welcome"><section class="intro"><div class="eyebrow">VOS DOCUMENTS. LEURS SIGNATURES.</div><h1>Du document<br>à la signature,<br><em>en quelques gestes.</em></h1><p>Préparez vos PDF, indiquez qui signe et partagez un lien personnel. Chacun peut lire et signer depuis son téléphone.</p><div class="steps"><span>01 · Importer</span><span>02 · Préparer</span><span>03 · Faire signer</span></div></section><section class="card auth"><span class="eyebrow">ESPACE ORGANISATEUR</span><h2>Ouvrir mon espace</h2><p class="muted">Connectez-vous avec le compte utilisé pour votre Journal de Chantier.</p><form id="loginForm" class="stack"><label>E-mail professionnel<input required id="email" type="email" autocomplete="email" placeholder="vous@entreprise.fr"></label><button class="btn primary" ${supabase ? "" : "disabled"}>Recevoir mon lien de connexion →</button></form>${supabase ? "" : '<p class="warning">Renseignez les deux variables Supabase dans .env pour activer les liens de signature.</p>'}<hr><button class="btn secondary" id="demo">Essayer l’analyse sur mon PDF</button><p class="small muted">L’essai analyse le PDF sur cet appareil. Pour partager un lien, connectez-vous à votre espace.</p></section></main>`,
+    `<main class="welcome"><section class="intro"><div class="eyebrow">VOS DOCUMENTS. LEURS SIGNATURES.</div><h1>Du document<br>à la signature,<br><em>en quelques gestes.</em></h1><p>Préparez vos PDF, indiquez qui signe et partagez un lien personnel. Chacun peut lire et signer depuis son téléphone.</p><div class="steps"><span>01 · Importer</span><span>02 · Préparer</span><span>03 · Faire signer</span></div></section><section class="card auth"><span class="eyebrow">ESPACE ORGANISATEUR</span><h2>Ouvrir mon espace</h2><p class="muted">Utilisez l’e-mail et le mot de passe de votre compte Journal de Chantier. Les signataires ouvrent directement leur lien personnel.</p><form id="loginForm" class="stack"><label>E-mail<input required id="email" type="email" autocomplete="username" placeholder="vous@entreprise.fr"></label><label>Mot de passe<input required id="password" type="password" autocomplete="current-password"></label><label class="small"><input id="showPassword" type="checkbox"> Afficher le mot de passe</label><button class="btn primary" ${supabase ? "" : "disabled"}>Se connecter →</button></form><div class="stack" style="margin-top:16px"><button class="btn secondary" id="resetPassword" ${supabase ? "" : "disabled"}>Mot de passe oublié / définir mon mot de passe</button><button class="btn secondary" id="magicLink" ${supabase ? "" : "disabled"}>Recevoir plutôt un lien par e-mail</button></div>${supabase ? "" : '<p class="warning">La connexion n’est pas configurée. Contactez l’organisateur.</p>'}<hr><button class="btn secondary" id="demo">Essayer l’analyse sur mon PDF</button><p class="small muted">L’essai analyse le PDF sur cet appareil. Pour partager un lien, connectez-vous à votre espace.</p></section></main>`,
   );
   $("#loginForm").onsubmit = (e) => {
     e.preventDefault();
     busy(e.submitter, async () => {
-      check(
-        await supabase.auth.signInWithOtp({
+      S.authSubmitting = true;
+      let result;
+      try {
+        result = await supabase.auth.signInWithPassword({
           email: $("#email").value.trim(),
-          options: { emailRedirectTo: APP_URL, shouldCreateUser: false },
-        }),
-      );
+          password: $("#password").value,
+        });
+      } finally {
+        S.authSubmitting = false;
+      }
+      const { data, error } = result;
+      if (error) throw new Error(authMessage(error));
+      S.session = data.session;
+      $("#password").value = "";
+      await dashboard();
+    });
+  };
+  $("#showPassword").onchange = (e) => {
+    $("#password").type = e.target.checked ? "text" : "password";
+  };
+  const sendEmail = (button, reset) =>
+    busy(button, async () => {
+      const email = $("#email");
+      if (!email.reportValidity()) return;
+      const result = reset
+        ? await supabase.auth.resetPasswordForEmail(email.value.trim(), {
+            redirectTo: new URL("?recovery=1", APP_URL).href,
+          })
+        : await supabase.auth.signInWithOtp({
+            email: email.value.trim(),
+            options: { emailRedirectTo: APP_URL, shouldCreateUser: false },
+          });
+      if (result.error) throw new Error(authMessage(result.error));
       notify(
-        "Lien de connexion envoyé. Consultez votre messagerie.",
+        "Si ce compte existe, un e-mail vous a été envoyé. Consultez aussi les indésirables. Ouvrez le lien le plus récent dans votre navigateur.",
         "success",
       );
     });
-  };
+  $("#resetPassword").onclick = (e) => sendEmail(e.currentTarget, true);
+  $("#magicLink").onclick = (e) => sendEmail(e.currentTarget, false);
   $("#demo").onclick = () => {
     S.demo = true;
     S.docs = [];
     dashboard();
   };
+}
+function authMessage(error) {
+  if (/invalid.*credentials/i.test(error.message))
+    return "E-mail ou mot de passe incorrect. Utilisez votre compte Journal de Chantier, ou définissez votre mot de passe avec le bouton ci-dessous.";
+  if (/confirm/i.test(error.message))
+    return "Confirmez votre adresse e-mail avant de vous connecter.";
+  if (/rate|too many|after.*second/i.test(error.message))
+    return "Trop de demandes rapprochées. Patientez avant de réessayer.";
+  if (/fetch|network/i.test(error.message))
+    return "Connexion au serveur impossible. Vérifiez votre connexion internet.";
+  return error.message || "Connexion impossible.";
+}
+function passwordRecovery() {
+  shell(
+    `<main class="container"><section class="card auth stack"><h1>Définir mon mot de passe</h1><p>Ce mot de passe sera aussi celui de votre compte Journal de Chantier.</p><form id="recoveryForm" class="stack"><label>Nouveau mot de passe<input id="newPassword" type="password" autocomplete="new-password" minlength="12" required></label><label>Confirmer le mot de passe<input id="confirmPassword" type="password" autocomplete="new-password" minlength="12" required></label><p class="small muted">Au moins 12 caractères.</p><button class="btn primary">Enregistrer mon mot de passe</button></form><button id="cancelRecovery" class="btn secondary">Annuler et se déconnecter</button></section></main>`,
+  );
+  $("#recoveryForm").onsubmit = (e) => {
+    e.preventDefault();
+    busy(e.submitter, async () => {
+      if ($("#newPassword").value !== $("#confirmPassword").value)
+        throw new Error("Les deux mots de passe ne correspondent pas.");
+      const { error } = await supabase.auth.updateUser({
+        password: $("#newPassword").value,
+      });
+      if (error) throw new Error(authMessage(error));
+      S.recovering = false;
+      history.replaceState({}, "", location.pathname);
+      S.session = check(await supabase.auth.getSession()).session;
+      await dashboard();
+      notify("Mot de passe enregistré.", "success");
+    });
+  };
+  $("#cancelRecovery").onclick = () =>
+    busy($("#cancelRecovery"), async () => {
+      S.recovering = false;
+      await supabase.auth.signOut();
+      history.replaceState({}, "", location.pathname);
+      login();
+    });
 }
 async function dashboard() {
   S.doc = null;

@@ -4,9 +4,12 @@ export default defineConfig({
   base: "./",
   plugins: [
     VitePWA({
-      registerType: "prompt",
+      registerType: "autoUpdate",
       includeAssets: ["icon.svg"],
       workbox: {
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ["**/*.{js,css,html,svg,webmanifest}"],
         globIgnores: ["ocr/**", "pdf-fonts/**"],
         maximumFileSizeToCacheInBytes: 6000000,

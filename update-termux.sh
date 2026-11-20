@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 PACKAGE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_NAME="${1:-signatureflow}"
+REPO_NAME="${1:-ghostbuilderDev/signatureflow}"
 TARGET_DIR="${SIGNATUREFLOW_REPO_DIR:-$HOME/signatureflow}"
-echo 'SignatureFlow 2.0 — mise à jour'
-if command -v pkg >/dev/null 2>&1; then pkg install -y git gh rsync unzip; fi
-for tool in git gh rsync; do command -v "$tool" >/dev/null || { echo "Commande manquante : $tool"; exit 1; }; done
+echo 'SignatureFlow 2.0.1 — connexion et publication vérifiée'
+if command -v pkg >/dev/null 2>&1; then pkg install -y git gh rsync unzip curl jq coreutils; fi
+for tool in git gh rsync curl jq; do command -v "$tool" >/dev/null || { echo "Commande manquante : $tool"; exit 1; }; done
 if ! gh auth status >/dev/null 2>&1; then gh auth login --hostname github.com --git-protocol https --scopes workflow --web; fi
 if [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
  SF_AUTH_STATUS="$(gh auth status 2>&1)"
@@ -18,15 +18,22 @@ if [ ! -d "$TARGET_DIR/.git" ]; then
  gh repo clone "$REPO_NAME" "$TARGET_DIR"
 fi
 cd "$TARGET_DIR"
+SF_ACTUAL_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+if [ "${SF_ACTUAL_REPO,,}" != ghostbuilderdev/signatureflow ]; then echo "Dépôt inattendu : $SF_ACTUAL_REPO"; exit 1; fi
 if [ -n "$(git status --porcelain)" ]; then echo 'Le dépôt contient des modifications locales. Enregistrez-les avant de relancer la mise à jour.'; exit 1; fi
 CURRENT_BRANCH="$(git branch --show-current)"
 if [ "$CURRENT_BRANCH" != main ]; then echo 'Placez le dépôt sur la branche main avant la mise à jour.'; exit 1; fi
 git pull --ff-only origin main
+SF_BASE="$(git rev-parse HEAD)"
+case "$SF_BASE" in
+ 1bfe34dc4ad83d4c4d5cc29870ab4894363f329c|591036515ef879315b4011b9c21e08b6912af614) ;;
+ *) case "$(git log -1 --format=%s)" in 'SignatureFlow 2.0.1: connexion et publication'*) ;; *) echo 'Une autre mise à jour existe déjà. Arrêt pour préserver cette version.'; exit 1 ;; esac ;;
+esac
 BACKUP_TAG="signatureflow-before-v2-$(date +%Y%m%d-%H%M%S)"
 git tag "$BACKUP_TAG"
 rsync -a --exclude='.git/' --exclude='node_modules/' --exclude='dist/' --exclude='.env' --exclude='.env.local' --exclude='.env.production' --exclude='test-results/' --exclude='playwright-report/' "$PACKAGE_DIR/" "$TARGET_DIR/"
-git add src public scripts tests integration supabase .github package.json package-lock.json vite.config.js index.html .gitignore .env.example README.md VALIDATION.md COMMANDES_TERMUX.txt setup-termux.sh configure-and-deploy.sh update-termux.sh termux-secrets-template.sh playwright.config.js deno.json
-if ! git diff --cached --quiet; then git -c user.name="$(gh api user --jq .login)" -c user.email="$(gh api user --jq .login)@users.noreply.github.com" commit -m 'SignatureFlow 2.0: PDF analysis, reviewed fields, personal signing links and transactional signatures'; fi
+git add src public scripts tests integration supabase .github package.json package-lock.json vite.config.js index.html .gitignore .env.example README.md VALIDATION.md COMMANDES_TERMUX.txt setup-termux.sh configure-and-deploy.sh update-termux.sh deploy-and-verify.sh termux-secrets-template.sh playwright.config.js deno.json
+if ! git diff --cached --quiet; then git -c user.name="$(gh api user --jq .login)" -c user.email="$(gh api user --jq .login)@users.noreply.github.com" commit -m 'SignatureFlow 2.0.1: connexion et publication vérifiée'; fi
 git push origin main
 # Restore only missing public settings from the original project configuration.
 SF_SECRET_NAMES="$(gh secret list --json name --jq '.[].name')"
@@ -45,12 +52,8 @@ fi
 if ! has_secret SUPABASE_PROJECT_REF; then printf %s eqfwdcttvnnrakyaacjm | gh secret set SUPABASE_PROJECT_REF; fi
 if ! has_secret SUPABASE_ACCESS_TOKEN || ! has_secret SUPABASE_DB_PASSWORD; then
  echo 'Configuration initiale des identifiants Supabase nécessaire.'
- bash ./configure-and-deploy.sh
- exit 0
+ SF_SKIP_DEPLOY=1 bash ./configure-and-deploy.sh
 fi
 # Backend workflow owns the order: database/functions first, then frontend.
-gh workflow run supabase.yml --ref main
-echo "Mise à jour poussée. Point de retour local : $BACKUP_TAG"
-echo 'Le déploiement de la base et des fonctions précède celui de l’interface.'
-echo 'Suivi : gh run list --workflow supabase.yml'
-echo 'Si les secrets Supabase ne sont pas encore configurés : ./configure-and-deploy.sh'
+echo "Point de retour local : $BACKUP_TAG"
+bash ./deploy-and-verify.sh

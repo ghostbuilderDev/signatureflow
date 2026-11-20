@@ -20,7 +20,5 @@ printf %s "$PROJECT_REF" | gh secret set SUPABASE_PROJECT_REF
 printf %s "$SF_ACCESS_TOKEN" | gh secret set SUPABASE_ACCESS_TOKEN
 printf %s "$SF_DB_PASSWORD" | gh secret set SUPABASE_DB_PASSWORD
 unset SF_ACCESS_TOKEN SF_DB_PASSWORD
-gh workflow run supabase.yml --ref main
-echo 'Déploiement lancé : gh run list --workflow supabase.yml'
-echo "Ajoutez $APP_URL aux Redirect URLs Supabase Authentication."
+if [ "${SF_SKIP_DEPLOY:-0}" != 1 ]; then bash ./deploy-and-verify.sh; fi
 echo 'Les liens copiables fonctionnent sans service e-mail. L’envoi direct réutilise RESEND_API_KEY et JOURNAL_CR_FROM, ou SIGNATUREFLOW_EMAIL_FROM.'

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createCanvas } from "@napi-rs/canvas";
+import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
 import { createWorker } from "tesseract.js";
 import { resolve } from "node:path";
 import {
@@ -9,14 +9,29 @@ import {
   detectTableCells,
 } from "../src/lib/detection-core.js";
 test("real French scan OCR plus raster cells detect the intended signature", async () => {
+  // CI images need not ship a usable sans-serif font. Render the same fixture everywhere.
+  assert.ok(
+    GlobalFonts.registerFromPath(
+      resolve(
+        "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
+      ),
+      "SignatureFlowTest",
+    ),
+  );
+  assert.ok(
+    GlobalFonts.registerFromPath(
+      resolve("node_modules/pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf"),
+      "SignatureFlowTest",
+    ),
+  );
   const canvas = createCanvas(1200, 1600),
     ctx = canvas.getContext("2d");
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, 1200, 1600);
   ctx.fillStyle = "black";
-  ctx.font = "bold 48px sans-serif";
+  ctx.font = "bold 48px SignatureFlowTest";
   ctx.fillText("BRIEFING CHANTIER", 100, 140);
-  ctx.font = "36px sans-serif";
+  ctx.font = "36px SignatureFlowTest";
   ctx.fillText("Document de prise de connaissance", 100, 240);
   ctx.fillText("Signature Alice Dupont", 100, 1050);
   ctx.lineWidth = 2;

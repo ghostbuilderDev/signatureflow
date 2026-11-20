@@ -38,6 +38,10 @@ jobs:
         run: |
           test -n "$SIGNATUREFLOW_PUBLIC_URL"
           npx supabase secrets set "SIGNATUREFLOW_APP_URL=$SIGNATUREFLOW_PUBLIC_URL" --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Configure authentication callbacks
+        env:
+          SIGNATUREFLOW_PUBLIC_URL: ${{ secrets.VITE_APP_URL }}
+        run: node scripts/configure-auth.mjs
       - name: Apply additive migrations
         run: npx supabase db push --linked --include-all --skip-vault --workdir "$RUNNER_TEMP/signatureflow-db" --password "$SUPABASE_DB_PASSWORD" --yes
       - name: Deploy SignatureFlow functions
