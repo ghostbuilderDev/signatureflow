@@ -1,3 +1,4 @@
+import signatureflowPackage from "../package.json";
 import "./style.css";
 import { createClient } from "@supabase/supabase-js";
 import * as pdfjs from "pdfjs-dist";
@@ -102,7 +103,7 @@ function shell(content, right = "") {
     p._observer?.disconnect();
   });
   pads = [];
-  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.1.1</span></div></header>${content}`;
+  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v${esc(signatureflowPackage.version)}</span></div></header>${content}`;
 }
 async function busy(button, fn) {
   if (button?.disabled) return;
