@@ -1,7 +1,7 @@
 {
   "name": "signatureflow",
   "private": true,
-  "version": "2.1.1",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -10,8 +10,8 @@
     "postinstall": "node scripts/prepare-assets.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "playwright test",
-    "check": "node --check src/main.js && node --check src/lib/detection-core.js && node --check src/lib/analyzer.js",
-    "test:functions": "deno test --allow-env --allow-read --allow-net tests/functions.test.ts"
+    "check": "node --check src/main.js && node --check src/lib/detection-core.js && node --check src/lib/analyzer.js && node --check integration/document-flow-ui.js && node --check integration/jdc/signatureflow-bridge.js",
+    "test:functions": "deno test --allow-env --allow-read --allow-net tests/functions.test.ts tests/flow-security.test.ts tests/flow-api.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.57.4",

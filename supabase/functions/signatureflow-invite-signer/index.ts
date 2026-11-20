@@ -1,3 +1,7 @@
+import {
+  encryptLink,
+  authorizeFlowEnvelope,
+} from "../_shared/flow-security.ts";
 import * as lib from "npm:pdf-lib@1.17.1";
 import { validateFields } from "../_shared/pdf-tools.mjs";
 import {
@@ -35,6 +39,7 @@ Deno.serve(async (req) => {
     );
     if (!doc || doc.owner_id !== user.id)
       throw new HttpError("Dossier inaccessible", 403);
+    await authorizeFlowEnvelope(req, doc);
     if (action === "cancel") {
       checked(
         await admin.rpc("signatureflow_cancel", {
@@ -138,20 +143,32 @@ Deno.serve(async (req) => {
       }),
     );
     checked(
-      await admin.rpc("signatureflow_issue", {
+      await admin.rpc(doc.sf3_managed ? "sf3_issue" : "signatureflow_issue", {
         p_document: doc.id,
         p_owner: user.id,
         p_links: links.map(({ id, hash, expires }) => ({ id, hash, expires })),
         p_hash: await sha256Bytes(bytes),
         p_pages: pdf.getPageCount(),
         p_manifest: manifest,
+        ...(doc.sf3_managed
+          ? {
+              p_encrypted: await Promise.all(
+                links.map(async (l) => ({
+                  id: l.id,
+                  hash: l.hash,
+                  cipher: await encryptLink(l.url),
+                })),
+              ),
+            }
+          : {}),
       }),
     );
+    const managedFlow = doc.sf3_managed === true;
     const results = [];
     for (const link of links) {
       let sent = false,
         error = "";
-      if (delivery === "email") {
+      if (delivery === "email" && !managedFlow) {
         try {
           const res = await fetch("https://api.resend.com/emails", {
             method: "POST",
@@ -174,18 +191,18 @@ Deno.serve(async (req) => {
         }
       }
       checked(
-        await admin
-          .from("signatureflow_audit_events")
-          .insert({
-            document_id: doc.id,
-            signer_id: link.id,
-            event_type: sent
+        await admin.from("signatureflow_audit_events").insert({
+          document_id: doc.id,
+          signer_id: link.id,
+          event_type: managedFlow
+            ? "invitation_queued"
+            : sent
               ? "invitation_sent"
               : delivery === "email"
                 ? "email_error"
                 : "link_created",
-            metadata: { expires_at: expires, ...(error ? { error } : {}) },
-          }),
+          metadata: { expires_at: expires, ...(error ? { error } : {}) },
+        }),
       );
       results.push({
         id: link.id,
@@ -200,6 +217,7 @@ Deno.serve(async (req) => {
     }
     return json({
       ok: true,
+      queued: managedFlow,
       sent: results.filter((r) => r.sent).length,
       links: results,
       warning:

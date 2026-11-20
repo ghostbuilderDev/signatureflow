@@ -10,3 +10,6 @@ public/pdf-fonts/
 playwright-report/
 test-results/
 .env.production
+
+node_modules
+__pycache__/

@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
@@ -24,7 +24,7 @@ jobs:
       - run: npm test
       - run: npm run test:functions
       - name: Check Edge Functions
-        run: npx deno check supabase/functions/signatureflow-invite-signer/index.ts supabase/functions/signatureflow-get-signing-context/index.ts supabase/functions/signatureflow-submit-signature/index.ts
+        run: npx deno check supabase/functions/signatureflow-invite-signer/index.ts supabase/functions/signatureflow-get-signing-context/index.ts supabase/functions/signatureflow-submit-signature/index.ts supabase/functions/signatureflow-flow/index.ts supabase/functions/signatureflow-flow-worker/index.ts supabase/functions/signatureflow-flow-webhook/index.ts
       - name: Prepare isolated migration workspace
         run: |
           mkdir -p "$RUNNER_TEMP/signatureflow-db/supabase/migrations"
@@ -49,6 +49,9 @@ jobs:
           npx supabase functions deploy signatureflow-invite-signer --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
           npx supabase functions deploy signatureflow-get-signing-context --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
           npx supabase functions deploy signatureflow-submit-signature --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
+          npx supabase functions deploy signatureflow-flow --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
+          npx supabase functions deploy signatureflow-flow-worker --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
+          npx supabase functions deploy signatureflow-flow-webhook --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy frontend after backend success
         env:
           GH_TOKEN: ${{ github.token }}

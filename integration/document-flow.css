@@ -1,0 +1,251 @@
+.sf3-root {
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  color: #17283b;
+  background: #f5f7fb;
+  max-width: 1250px;
+  margin: auto;
+  padding: 22px;
+  box-sizing: border-box;
+}
+.sf3-root * {
+  box-sizing: border-box;
+}
+.sf3-heading,
+.sf3-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sf3-actions {
+  justify-content: flex-start;
+  margin: 14px 0;
+}
+.sf3-eyebrow {
+  font-size: 0.85rem;
+  color: #426078;
+  font-weight: 700;
+}
+.sf3-root h2 {
+  font-size: 1.5rem;
+  margin: 6px 0;
+}
+.sf3-root h3 {
+  font-size: 1.15rem;
+  margin: 8px 0;
+}
+.sf3-root button,
+.sf3-button {
+  font: inherit;
+  background: white;
+  color: #234b8d;
+  border: 1px solid #ccd5e3;
+  border-radius: 9px;
+  padding: 11px 15px;
+  min-height: 44px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  text-align: center;
+}
+.sf3-root .sf3-primary {
+  background: #305be5;
+  color: white;
+  border-color: #305be5;
+}
+.sf3-root button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.sf3-card,
+.sf3-form {
+  padding: 20px;
+  background: white;
+  border: 1px solid #dce3ec;
+  border-radius: 14px;
+  margin: 18px 0;
+}
+.sf3-form {
+  display: grid;
+  gap: 16px;
+}
+.sf3-root label {
+  font-weight: 600;
+  display: grid;
+  gap: 7px;
+}
+.sf3-root input,
+.sf3-root select,
+.sf3-root textarea {
+  font: inherit;
+  border: 1px solid #bdc9d8;
+  border-radius: 8px;
+  padding: 11px;
+  max-width: 100%;
+  width: 100%;
+  color: #17283b;
+  background: white;
+}
+.sf3-root input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.sf3-check {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 12px !important;
+}
+.sf3-notice {
+  background: #e7f0ff;
+  color: #254a7f;
+  border-radius: 9px;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+.sf3-error {
+  background: #fff0ec;
+  color: #963c26;
+  padding: 12px;
+  border-radius: 8px;
+}
+.sf3-tag {
+  display: inline-block;
+  padding: 5px 10px;
+  background: #edf2fc;
+  border-radius: 20px;
+  font-size: 0.9rem;
+}
+.sf3-table-wrap {
+  overflow: auto;
+}
+.sf3-root table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 650px;
+}
+.sf3-root th,
+.sf3-root td {
+  text-align: left;
+  border-bottom: 1px solid #e0e5ed;
+  padding: 12px;
+  vertical-align: top;
+  font-size: 0.9rem;
+}
+.sf3-root code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 10px;
+}
+.sf3-recipient {
+  border: 1px solid #d6deea;
+  border-radius: 12px;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 10px 0;
+}
+.sf3-recipient legend {
+  padding: 0 7px;
+  font-weight: 700;
+}
+.sf3-metrics {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  background: #e9f3f0;
+  border-radius: 10px;
+}
+.sf3-metrics strong {
+  font-size: 1.5rem;
+  white-space: nowrap;
+}
+.sf3-dialog {
+  width: min(1200px, 98vw);
+  max-height: 95dvh;
+  border: 0;
+  border-radius: 14px;
+  padding: 0;
+  overflow: auto;
+}
+.sf3-dialog::backdrop {
+  background: #102037aa;
+}
+.sf3-inbox-trigger {
+  position: fixed;
+  bottom: 90px;
+  right: 16px;
+  z-index: 40;
+  border: 0;
+  background: #305be5;
+  color: white;
+  padding: 13px 18px;
+  border-radius: 25px;
+  font: 600 15px system-ui;
+  box-shadow: 0 4px 18px #17304b35;
+}
+.sf3-inline-action {
+  font: inherit;
+  margin: 8px;
+  padding: 9px 12px;
+  border: 1px solid #b6c9e3;
+  background: #edf3ff;
+  border-radius: 8px;
+  color: #244c82;
+}
+.sf3-root [hidden] {
+  display: none !important;
+}
+@media (max-width: 650px) {
+  .sf3-root {
+    padding: 14px;
+  }
+  .sf3-recipient {
+    grid-template-columns: 1fr;
+  }
+  .sf3-card,
+  .sf3-form {
+    padding: 15px;
+  }
+  .sf3-actions > * {
+    flex: 1;
+  }
+  .sf3-heading h2 {
+    font-size: 1.25rem;
+  }
+  .sf3-metrics {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .sf3-inbox-trigger {
+    bottom: 84px;
+    max-width: 75vw;
+  }
+}
+.sf3-inbox-notice {
+  position: fixed;
+  z-index: 12000;
+  right: 16px;
+  bottom: 90px;
+  max-width: min(370px, calc(100vw - 32px));
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #ccd7f4;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px #19295d26;
+  color: #203052;
+}
+.sf3-inbox-notice button {
+  padding: 10px;
+  margin: 4px;
+  border: 1px solid #ccd7f4;
+  border-radius: 10px;
+  background: #edf2ff;
+  color: #244ebd;
+  font: inherit;
+}

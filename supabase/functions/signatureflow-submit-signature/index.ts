@@ -316,7 +316,7 @@ Deno.serve(async (req) => {
           .eq("id", doc.id)
           .single(),
       ),
-      delivery = await deliverAutomaticCopies(
+      delivery = completedDoc.sf3_managed ? {sent:0,failed:0,skipped:false,queued:true} : await deliverAutomaticCopies(
         admin,
         completedDoc,
         signer,
