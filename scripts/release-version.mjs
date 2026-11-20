@@ -12,7 +12,7 @@ if (commit === "local") {
 await writeFile(
   "dist/version.json",
   JSON.stringify({
-    version: "2.1.0",
+    version: "2.1.1",
     commit,
     builtAt: new Date().toISOString(),
   }) + "\n",

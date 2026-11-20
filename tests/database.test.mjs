@@ -31,11 +31,46 @@ test("migration, RLS, atomic save, concurrent lease, hash checks and cancellatio
       "utf8",
     ),
   );
+  for (const migration of [
+    "20261120120637_signatureflow_import_draft_status_permission.sql",
+    "20261120121107_signatureflow_storage_original_path_scope.sql",
+  ])
+    await db.exec(await readFile(`supabase/migrations/${migration}`, "utf8"));
+  await db.exec(
+    "grant select,insert,delete on storage.objects to authenticated",
+  );
   await db.exec(
     `insert into auth.users values('${u}'),('${other}'); set role authenticated;select set_config('request.jwt.claim.sub','${u}',false);`,
   );
   await db.exec(
-    `insert into signatureflow_documents(id,owner_id,name,storage_path,current_storage_path,page_count) values('${doc}','${u}','Test','${u}/${doc}/original.pdf','${u}/${doc}/original.pdf',2);insert into signatureflow_signers(id,document_id,name,email,signing_order) values('${a}','${doc}','Alice','a@example.fr',1),('${b}','${doc}','Bob','b@example.fr',2);`,
+    `insert into signatureflow_documents(id,owner_id,name,storage_path,current_storage_path,page_count,status) values('${doc}','${u}','Test','${u}/${doc}/original.pdf','${u}/${doc}/original.pdf',2,'draft');insert into signatureflow_signers(id,document_id,name,email,signing_order) values('${a}','${doc}','Alice','a@example.fr',1),('${b}','${doc}','Bob','b@example.fr',2);`,
+  );
+  await db.exec(
+    `insert into storage.objects(id,bucket_id,name) values('${doc}','signatureflow-documents','${u}/${doc}/original.pdf')`,
+  );
+  assert.equal(
+    (await db.query("select * from storage.objects")).rows.length,
+    1,
+    "owner can upload/read original PDF with a distinct document title",
+  );
+  await assert.rejects(
+    db.exec(
+      `insert into storage.objects(id,bucket_id,name) values('${other}','signatureflow-documents','${u}/${other}/original.pdf')`,
+    ),
+    /row-level security/,
+  );
+  await db.exec(`select set_config('request.jwt.claim.sub','${other}',false)`);
+  assert.equal(
+    (await db.query("select * from storage.objects")).rows.length,
+    0,
+    "another owner cannot read the original PDF",
+  );
+  await db.exec(`select set_config('request.jwt.claim.sub','${u}',false)`);
+  await db.exec(`delete from storage.objects where id='${doc}'`);
+  assert.equal(
+    (await db.query("select * from storage.objects")).rows.length,
+    0,
+    "owner can remove a draft original",
   );
   const fields = [a, b].map((id, i) => ({
     id: `30000000-0000-4000-8000-00000000000${i + 1}`,

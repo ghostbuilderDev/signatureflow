@@ -102,7 +102,7 @@ function shell(content, right = "") {
     p._observer?.disconnect();
   });
   pads = [];
-  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.1.0</span></div></header>${content}`;
+  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.1.1</span></div></header>${content}`;
 }
 async function busy(button, fn) {
   if (button?.disabled) return;
@@ -114,6 +114,8 @@ async function busy(button, fn) {
   try {
     return await fn();
   } catch (e) {
+    if (["shareLinks", "emailLinks", "save"].includes(button?.id))
+      showPreparationError(e);
     notify(e.message || "Une erreur est survenue.", "error");
   } finally {
     if (button?.isConnected) {
@@ -146,6 +148,8 @@ const fileName = () => S.doc.name.replace(/[^\p{L}\p{N}._-]/gu, "_");
 function dirty() {
   S.dirty = true;
   if (S.doc?.status === "draft") S.doc.prepared_at = null;
+  if ($("#confirmPreparation")) $("#confirmPreparation").checked = false;
+  if ($("#preparationFeedback")) $("#preparationFeedback").hidden = true;
   $("#savedState")?.replaceChildren(
     document.createTextNode("Modifications à enregistrer"),
   );
@@ -319,10 +323,7 @@ async function dashboard() {
         .from("signatureflow_documents")
         .select("*")
         .order("created_at", { ascending: false }),
-      supabase
-        .from("signatureflow_contacts")
-        .select("*")
-        .order("name"),
+      supabase.from("signatureflow_contacts").select("*").order("name"),
     ]);
     S.docs = check(documents);
     S.contacts = check(contacts);
@@ -456,7 +457,9 @@ async function openDocument(id) {
   const result = await Promise.all([
     supabase
       .from("signatureflow_signers")
-      .select("id,document_id,name,email,role,signing_order,status,signed_at,copy_sent_at")
+      .select(
+        "id,document_id,name,email,role,signing_order,status,signed_at,copy_sent_at",
+      )
       .eq("document_id", id)
       .order("signing_order"),
     supabase
@@ -470,10 +473,7 @@ async function openDocument(id) {
       .eq("document_id", id)
       .order("created_at", { ascending: false })
       .limit(500),
-    supabase
-      .from("signatureflow_contacts")
-      .select("*")
-      .order("name"),
+    supabase.from("signatureflow_contacts").select("*").order("name"),
   ]);
   const blob = check(
       await supabase.storage
@@ -528,7 +528,7 @@ function editor() {
         .join(""),
     completionRecipients = (S.doc.completion_recipients || []).join(", ");
   shell(
-    `<main class="editor-shell"><div class="editor-heading"><button class="btn secondary" id="back">← Documents</button><div><h1>${esc(S.doc.name)}</h1><p class="small muted">${esc(S.doc.source_ref || "")} <span class="pill ${S.doc.status}">${statusNames[S.doc.status]}</span></p></div><div class="row"><button class="btn secondary" id="download">↓ PDF</button>${!S.demo ? '<button class="btn secondary" id="refresh">Actualiser</button>' : ""}</div></div><div class="editor-grid"><aside class="card preparation stack"><span class="eyebrow">01 · LES DESTINATAIRES</span><h2>Qui doit signer ?</h2><div id="signerList" class="stack"></div>${edit ? `<form id="signerForm" class="stack"><label>Contact enregistré<select id="savedContact">${contactOptions}</select></label><label>Nom et prénom<input id="signerName" required maxlength="160"></label><label>E-mail<input id="signerEmail" required type="email" maxlength="254"></label><label>Fonction dans le document<input id="signerRole" placeholder="Ex. Responsable travaux" maxlength="100"></label><label class="check"><input id="saveContact" type="checkbox" checked>Enregistrer ou actualiser ce contact</label><button class="btn secondary">+ Ajouter ce signataire</button></form><details class="contact-book"><summary>Carnet de contacts · ${S.contacts.length}</summary><div class="stack">${S.contacts.map((contact) => `<div class="contact-row"><span><strong>${esc(contact.name)}</strong><small>${esc(contact.role || contact.email)}</small></span><button class="remove-contact" data-contact="${contact.id}" aria-label="Supprimer ${esc(contact.name)}">×</button></div>`).join("") || '<p class="small muted">Aucun contact enregistré.</p>'}</div></details><hr><label>Ordre de signature<select id="signingMode"><option value="parallel" ${S.doc.signing_mode === "parallel" ? "selected" : ""}>Chacun peut signer dès réception</option><option value="sequential" ${S.doc.signing_mode === "sequential" ? "selected" : ""}>Dans l’ordre des signataires</option></select></label><label>Type de circuit<select id="workflowType"><option value="approval" ${S.doc.workflow_type !== "acknowledgement" ? "selected" : ""}>Validation complète</option><option value="acknowledgement" ${S.doc.workflow_type === "acknowledgement" ? "selected" : ""}>Prise de connaissance</option></select></label><label>Envoi automatique<select id="completionMode"><option value="all_after_complete" ${S.doc.completion_mode === "all_after_complete" ? "selected" : ""}>PDF final après toutes les signatures</option><option value="signer_after_each" ${S.doc.completion_mode === "signer_after_each" ? "selected" : ""}>Copie après chaque prise de connaissance</option><option value="manual" ${S.doc.completion_mode === "manual" ? "selected" : ""}>Envoi manuel uniquement</option></select></label><label>Copies finales supplémentaires<textarea id="completionRecipients" rows="2" maxlength="4000">${esc(completionRecipients)}</textarea></label><label class="check"><input id="requireFullRead" type="checkbox" ${S.doc.require_full_read !== false ? "checked" : ""}>Obliger la consultation de toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" ${S.doc.identity_stamp !== false ? "checked" : ""}>Inscrire nom et fonction avec la signature</label>` : '<p class="notice small">Le document est figé depuis la création des liens.</p>'}<hr><span class="eyebrow">03 · VALIDATION ET PARTAGE</span>${edit ? `<label class="check review-confirm"><input id="confirmPreparation" type="checkbox" ${S.doc.prepared_at ? "checked" : ""}>J’ai contrôlé l’intégralité du PDF, les noms, fonctions et emplacements</label>` : ""}<button id="shareLinks" class="btn primary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>${S.doc.status === "draft" ? "Valider et créer les liens" : "Renouveler les liens"}</button><button id="emailLinks" class="btn secondary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>Valider et envoyer les invitations</button><div id="linkList" class="stack"></div>${S.demo ? '<p class="small muted">Connectez-vous pour enregistrer un dossier et faire signer votre document.</p>' : ""}${!S.demo && S.doc.status === "in_progress" ? '<button class="btn danger" id="cancelEnvelope">Annuler les liens de ce dossier</button>' : ""}</aside><section class="pdf-column"><div class="card toolbar"><div class="row"><button class="btn secondary icon" id="prev" aria-label="Page précédente">←</button><label class="page-control">Page <input id="pageInput" type="number" min="1" max="${S.pdf.numPages}" value="${S.page}"> / ${S.pdf.numPages}</label><button class="btn secondary icon" id="next" aria-label="Page suivante">→</button></div>${edit ? `<div class="row"><select id="ocrMode" aria-label="Mode OCR"><option value="auto">OCR si PDF scanné</option><option value="always">OCR sur toutes les pages</option><option value="never">Sans OCR</option></select><button class="btn primary" id="analyze">Analyser le PDF</button><button class="btn secondary" id="stopAnalysis" hidden>Arrêter</button></div>` : ""}</div><div id="analysisStatus" class="small muted" aria-live="polite"></div><div class="pdf-host" id="pdfHost"></div>${edit ? `<div class="card manual-tools"><span class="eyebrow">AJOUTER UNE ZONE</span><div class="row"><select id="manualSigner" aria-label="Signataire de la zone">${signerOptions()}</select><select id="manualKind" aria-label="Type de zone">${kindOptions()}</select><button class="btn secondary" id="place">+ Placer sur la page</button></div><p class="small muted">Cliquez sur le PDF, puis déplacez la zone ou étirez sa poignée. Sélectionnez une zone pour la modifier.</p></div>` : ""}</section><aside class="card review stack"><span class="eyebrow">02 · LES EMPLACEMENTS</span><div class="row between"><h2>Zones du document</h2><span id="zoneCount" class="pill"></span></div><div id="fieldList" class="stack"></div><div id="fieldDetail"></div>${edit ? '<button class="btn primary" id="save">Enregistrer les zones</button><div class="small muted" id="savedState">Zones enregistrées</div>' : ""}<hr><h3>Suivi du dossier</h3><div class="audit-list">${
+    `<main class="editor-shell"><div class="editor-heading"><button class="btn secondary" id="back">← Documents</button><div><h1>${esc(S.doc.name)}</h1><p class="small muted">${esc(S.doc.source_ref || "")} <span class="pill ${S.doc.status}">${statusNames[S.doc.status]}</span></p></div><div class="row"><button class="btn secondary" id="download">↓ PDF</button>${!S.demo ? '<button class="btn secondary" id="refresh">Actualiser</button>' : ""}</div></div><div class="editor-grid"><aside class="card preparation stack"><span class="eyebrow">01 · LES DESTINATAIRES</span><h2>Qui doit signer ?</h2><div id="signerList" class="stack"></div>${edit ? `<form id="signerForm" class="stack"><label>Contact enregistré<select id="savedContact">${contactOptions}</select></label><label>Nom et prénom<input id="signerName" required maxlength="160"></label><label>E-mail<input id="signerEmail" required type="email" maxlength="254"></label><label>Fonction dans le document<input id="signerRole" placeholder="Ex. Responsable travaux" maxlength="100"></label><label class="check"><input id="saveContact" type="checkbox" checked>Enregistrer ou actualiser ce contact</label><button class="btn secondary">+ Ajouter ce signataire</button></form><details class="contact-book"><summary>Carnet de contacts · ${S.contacts.length}</summary><div class="stack">${S.contacts.map((contact) => `<div class="contact-row"><span><strong>${esc(contact.name)}</strong><small>${esc(contact.role || contact.email)}</small></span><button class="remove-contact" data-contact="${contact.id}" aria-label="Supprimer ${esc(contact.name)}">×</button></div>`).join("") || '<p class="small muted">Aucun contact enregistré.</p>'}</div></details><hr><label>Ordre de signature<select id="signingMode"><option value="parallel" ${S.doc.signing_mode === "parallel" ? "selected" : ""}>Chacun peut signer dès réception</option><option value="sequential" ${S.doc.signing_mode === "sequential" ? "selected" : ""}>Dans l’ordre des signataires</option></select></label><label>Type de circuit<select id="workflowType"><option value="approval" ${S.doc.workflow_type !== "acknowledgement" ? "selected" : ""}>Validation complète</option><option value="acknowledgement" ${S.doc.workflow_type === "acknowledgement" ? "selected" : ""}>Prise de connaissance</option></select></label><label>Envoi automatique<select id="completionMode"><option value="all_after_complete" ${S.doc.completion_mode === "all_after_complete" ? "selected" : ""}>PDF final après toutes les signatures</option><option value="signer_after_each" ${S.doc.completion_mode === "signer_after_each" ? "selected" : ""}>Copie après chaque prise de connaissance</option><option value="manual" ${S.doc.completion_mode === "manual" ? "selected" : ""}>Envoi manuel uniquement</option></select></label><label>Copies finales supplémentaires<textarea id="completionRecipients" rows="2" maxlength="4000">${esc(completionRecipients)}</textarea></label><label class="check"><input id="requireFullRead" type="checkbox" ${S.doc.require_full_read !== false ? "checked" : ""}>Obliger la consultation de toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" ${S.doc.identity_stamp !== false ? "checked" : ""}>Inscrire nom et fonction avec la signature</label>` : '<p class="notice small">Le document est figé depuis la création des liens.</p>'}<hr><span class="eyebrow">03 · VALIDATION ET PARTAGE</span>${edit ? `<label class="check review-confirm"><input id="confirmPreparation" type="checkbox" ${S.doc.prepared_at ? "checked" : ""}>J’ai contrôlé l’intégralité du PDF, les noms, fonctions et emplacements</label>` : ""}<button id="shareLinks" class="btn primary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>${S.doc.status === "draft" ? "Valider et créer les liens" : "Renouveler les liens"}</button><button id="emailLinks" class="btn secondary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>Valider et envoyer les invitations</button><div id="preparationFeedback" class="stack" role="status" aria-live="polite" hidden></div><div id="linkList" class="stack"></div>${S.demo ? '<p class="small muted">Connectez-vous pour enregistrer un dossier et faire signer votre document.</p>' : ""}${!S.demo && S.doc.status === "in_progress" ? '<button class="btn danger" id="cancelEnvelope">Annuler les liens de ce dossier</button>' : ""}</aside><section class="pdf-column"><div class="card toolbar"><div class="row"><button class="btn secondary icon" id="prev" aria-label="Page précédente">←</button><label class="page-control">Page <input id="pageInput" type="number" min="1" max="${S.pdf.numPages}" value="${S.page}"> / ${S.pdf.numPages}</label><button class="btn secondary icon" id="next" aria-label="Page suivante">→</button></div>${edit ? `<div class="row"><select id="ocrMode" aria-label="Mode OCR"><option value="auto">OCR si PDF scanné</option><option value="always">OCR sur toutes les pages</option><option value="never">Sans OCR</option></select><button class="btn primary" id="analyze">Analyser le PDF</button><button class="btn secondary" id="stopAnalysis" hidden>Arrêter</button></div>` : ""}</div><div id="analysisStatus" class="small muted" aria-live="polite"></div><div id="selectedZoneTools" class="card manual-tools stack" hidden></div><div class="pdf-host" id="pdfHost"></div>${edit ? `<div class="card manual-tools"><span class="eyebrow">AJOUTER UNE NOUVELLE ZONE</span><div class="row"><select id="manualSigner" aria-label="Signataire de la zone">${signerOptions()}</select><select id="manualKind" aria-label="Type de zone">${kindOptions()}</select><button class="btn secondary" id="place">+ Placer sur la page</button></div><p class="small muted">Ces choix concernent la prochaine zone à ajouter. Pour modifier une zone déjà placée, touchez son cadre sur le PDF puis utilisez « Modifier la zone sélectionnée ».</p></div>` : ""}</section><aside class="card review stack"><span class="eyebrow">02 · LES EMPLACEMENTS</span><div class="row between"><h2>Zones du document</h2><span id="zoneCount" class="pill"></span></div><div id="fieldList" class="stack"></div><div id="fieldDetail"></div>${edit ? '<button class="btn primary" id="save">Enregistrer les zones</button><div class="small muted" id="savedState">Zones enregistrées</div>' : ""}<hr><h3>Suivi du dossier</h3><div class="audit-list">${
       S.audit
         .slice(0, 20)
         .map(
@@ -996,6 +996,28 @@ function drawFields() {
       }),
   );
   const f = S.fields.find((f) => f.id === S.selected);
+  const selectedTools = $("#selectedZoneTools");
+  if (selectedTools) {
+    selectedTools.hidden = !f || !editable();
+    selectedTools.innerHTML =
+      f && editable()
+        ? `<strong>Modifier la zone sélectionnée · page ${f.page}</strong><label>Signataire de cette zone<select id="selectedSigner">${signerOptions(f.signer_id)}</select></label><label>Type de cette zone<select id="selectedKind">${kindOptions(f.kind)}</select></label><p class="small muted">Ces réglages modifient directement le cadre sélectionné sur le PDF.</p>`
+        : "";
+    if (f && editable()) {
+      $("#selectedSigner").onchange = (e) => {
+        f.signer_id = e.target.value || null;
+        dirty();
+        drawFields();
+        drawOverlays();
+      };
+      $("#selectedKind").onchange = (e) => {
+        f.kind = e.target.value;
+        dirty();
+        drawFields();
+        drawOverlays();
+      };
+    }
+  }
   $("#fieldDetail").innerHTML =
     f && editable()
       ? `<div class="field-settings stack"><strong>Modifier cette zone</strong><p class="small muted">${esc(f.label || "Zone manuelle")}<br>${esc(f.detection_source || "")}</p><label>Signataire<select id="fieldSigner">${signerOptions(f.signer_id)}</select></label><label>Type<select id="fieldKind">${kindOptions(f.kind)}</select></label><label>Libellé<input id="fieldLabel" value="${esc(f.label)}" maxlength="160"></label><label class="check"><input type="checkbox" id="fieldRequired" ${f.required ? "checked" : ""}>Champ obligatoire</label><label class="check"><input id="fieldConfirmed" type="checkbox" ${f.confirmed ? "checked" : ""}>Position et attribution vérifiées</label><button class="btn danger" id="deleteField">Supprimer la zone</button></div>`
@@ -1081,21 +1103,100 @@ async function runAnalysis() {
     analysisController = null;
   }
 }
+function preparationError(message, field, signer) {
+  const error = new Error(message);
+  error.fieldId = field?.id;
+  error.signerId = signer?.id;
+  return error;
+}
+function preparationFeedback(message, type = "notice") {
+  const panel = $("#preparationFeedback");
+  if (!panel) return;
+  panel.hidden = false;
+  panel.className = `stack ${type}`;
+  panel.replaceChildren(document.createTextNode(message));
+  return panel;
+}
+function showPreparationError(error) {
+  const panel = preparationFeedback(
+    error.message || "Création des liens interrompue. Réessayez.",
+    "error",
+  );
+  if (!panel) return;
+  const field = S.fields.find((f) => f.id === error.fieldId);
+  const signer = S.signers.find((s) => s.id === error.signerId);
+  if (signer) {
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "btn secondary";
+    add.textContent = `Ajouter une zone Signature pour ${signer.name}`;
+    add.onclick = () => {
+      S.placing = { signer: signer.id, kind: "signature" };
+      $("#pdfHost").classList.add("placing");
+      $("#pdfHost").scrollIntoView({ block: "center" });
+      notify("Touchez une zone libre du PDF pour placer la signature.");
+    };
+    panel.append(add);
+    if (field && !["signature", "initials"].includes(field.kind)) {
+      const convert = document.createElement("button");
+      convert.type = "button";
+      convert.className = "btn secondary";
+      convert.textContent = `Transformer « ${kinds[field.kind]} » (page ${field.page}) en zone Signature pour ${signer.name}`;
+      convert.onclick = () => {
+        field.kind = "signature";
+        field.label = kinds.signature;
+        Object.assign(
+          field,
+          bounded({ ...field, height: Math.max(field.height, 0.075) }),
+        );
+        S.placing = null;
+        $("#pdfHost").classList.remove("placing");
+        S.selected = field.id;
+        dirty();
+        goPage(field.page);
+        drawFields();
+        $("#selectedZoneTools").scrollIntoView({ block: "center" });
+        preparationFeedback(
+          "Zone transformée en Signature. Vérifiez son emplacement, puis cochez le contrôle du PDF et relancez la création des liens.",
+          "success",
+        );
+      };
+      panel.append(convert);
+    }
+  }
+  panel.scrollIntoView({ block: "center" });
+}
 function validateDraft() {
   if (!S.signers.length) throw new Error("Ajoutez au moins un signataire.");
-  if (!S.fields.length) throw new Error("Ajoutez les zones de signature.");
-  if (S.fields.some((f) => !f.signer_id || !f.confirmed))
-    throw new Error(
-      "Attribuez et vérifiez toutes les zones avant d’enregistrer.",
+  if (!S.fields.length)
+    throw preparationError(
+      "Ajoutez une zone de signature sur le PDF pour chaque signataire.",
+      null,
+      S.signers[0],
     );
-  for (const s of S.signers)
+  const unreviewed = S.fields.find((f) => !f.signer_id || !f.confirmed);
+  if (unreviewed)
+    throw preparationError(
+      `Attribuez et vérifiez la zone « ${kinds[unreviewed.kind]} » de la page ${unreviewed.page} avant d’enregistrer.`,
+      unreviewed,
+    );
+  for (const signer of S.signers) {
     if (
-      !S.fields.some(
+      S.fields.some(
         (f) =>
-          f.signer_id === s.id && ["signature", "initials"].includes(f.kind),
+          f.signer_id === signer.id &&
+          ["signature", "initials"].includes(f.kind),
       )
     )
-      throw new Error(`Ajoutez une signature ou un paraphe pour ${s.name}.`);
+      continue;
+    const assigned = S.fields.filter((f) => f.signer_id === signer.id);
+    const field = assigned.find((f) => f.id === S.selected) || assigned[0];
+    throw preparationError(
+      `Il manque une zone de signature ou de paraphe pour ${signer.name}.${field ? ` La zone « ${kinds[field.kind]} » de la page ${field.page} doit être complétée par une signature, ou transformée avec le bouton ci-dessous.` : ""}`,
+      field,
+      signer,
+    );
+  }
 }
 async function saveFields() {
   validateDraft();
@@ -1149,24 +1250,31 @@ async function saveFields() {
 }
 async function issueLinks(delivery) {
   if (S.demo) return;
+  preparationFeedback("Vérification du dossier…");
   if (editable()) {
     if (!$("#confirmPreparation")?.checked)
       throw new Error(
         "Confirmez avoir contrôlé toutes les pages, les identités et les emplacements avant l’envoi.",
       );
+    preparationFeedback("Enregistrement des zones de signature…");
     await saveFields();
+    preparationFeedback("Validation de la préparation…");
     S.doc.prepared_at = check(
       await supabase.rpc("signatureflow_confirm_preparation", {
         p_document: S.doc.id,
       }),
     );
-  }
-  else if (
+  } else if (
     !confirm(
       "Renouveler les liens des signataires en attente ? Leurs anciens liens seront désactivés.",
     )
   )
     return;
+  preparationFeedback(
+    delivery === "email"
+      ? "Création des liens et envoi des invitations…"
+      : "Création des liens personnels…",
+  );
   const result = await invoke("signatureflow-invite-signer", {
     documentId: S.doc.id,
     appUrl: APP_URL,
@@ -1176,6 +1284,8 @@ async function issueLinks(delivery) {
   await openDocument(S.doc.id);
   S.links = links;
   renderLinks();
+  preparationFeedback("Les liens personnels sont prêts ci-dessous.", "success");
+  $("#linkList").scrollIntoView({ block: "center" });
   notify(
     delivery === "email"
       ? `${result.sent}/${links.length} invitation(s) envoyée(s). Les liens restent disponibles ci-dessous.`
