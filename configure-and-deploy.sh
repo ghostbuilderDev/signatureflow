@@ -1,42 +1,26 @@
-#!/data/data/com.termux/files/usr/bin/bash
-set -e
-
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 PROJECT_REF="eqfwdcttvnnrakyaacjm"
-
-echo "== SignatureFlow / déploiement sur journal-chantier-connecte =="
-
-if ! gh auth status >/dev/null 2>&1; then
-  echo "Connexion GitHub requise."
-  gh auth login
-fi
-
-OWNER=$(gh repo view --json owner --jq '.owner.login')
-REPO=$(gh repo view --json name --jq '.name')
-if [ "$REPO" = "$OWNER.github.io" ]; then
-  APP_URL="https://$OWNER.github.io/"
-else
-  APP_URL="https://$OWNER.github.io/$REPO/"
-fi
-
-echo "URL de l'application : $APP_URL"
-echo
-read -r -s -p "Supabase Personal Access Token : " SUPABASE_ACCESS_TOKEN; echo
-read -r -s -p "Mot de passe de la base du projet journal-chantier-connecte : " SUPABASE_DB_PASSWORD; echo
-
+SUPABASE_PUBLIC_URL="https://eqfwdcttvnnrakyaacjm.supabase.co"
+SUPABASE_PUBLIC_KEY="sb_publishable_95GXQ_XVGnvolLedkrIsLA_YJZ0gx4O"
+if ! gh auth status >/dev/null 2>&1; then gh auth login --hostname github.com --git-protocol https --scopes workflow --web; fi
+OWNER="$(gh repo view --json owner --jq '.owner.login')"; REPO="$(gh repo view --json name --jq '.name')"
+if [ "$REPO" = "$OWNER.github.io" ]; then APP_URL="https://$OWNER.github.io/"; else APP_URL="https://$OWNER.github.io/$REPO/"; fi
+echo "Cible Supabase : $PROJECT_REF — tables signatureflow uniquement"
+read -r -p "URL publique SignatureFlow [$APP_URL] : " CUSTOM_APP_URL
+APP_URL="${CUSTOM_APP_URL:-$APP_URL}"
+read -r -s -p 'Supabase Personal Access Token : ' SF_ACCESS_TOKEN; echo
+read -r -s -p 'Mot de passe de la base : ' SF_DB_PASSWORD; echo
+[ -n "$SF_ACCESS_TOKEN" ] && [ -n "$SF_DB_PASSWORD" ] || { echo 'Les deux valeurs sont nécessaires.'; exit 1; }
 printf %s "$APP_URL" | gh secret set VITE_APP_URL
+printf %s "$SUPABASE_PUBLIC_URL" | gh secret set VITE_SUPABASE_URL
+printf %s "$SUPABASE_PUBLIC_KEY" | gh secret set VITE_SUPABASE_PUBLISHABLE_KEY
 printf %s "$PROJECT_REF" | gh secret set SUPABASE_PROJECT_REF
-printf %s "$SUPABASE_ACCESS_TOKEN" | gh secret set SUPABASE_ACCESS_TOKEN
-printf %s "$SUPABASE_DB_PASSWORD" | gh secret set SUPABASE_DB_PASSWORD
-
-echo
-echo "Secrets enregistrés. Lancement des déploiements..."
-gh workflow run supabase.yml
-gh workflow run pages.yml
-
-echo
-echo "Déploiements lancés. Suivi : gh run list"
-echo "URL prévue : $APP_URL"
-echo
-echo "Dans Supabase > Authentication > URL Configuration, ajouter :"
-echo "$APP_URL"
-echo "Le service e-mail Resend existant du Journal de chantier est réutilisé automatiquement."
+printf %s "$SF_ACCESS_TOKEN" | gh secret set SUPABASE_ACCESS_TOKEN
+printf %s "$SF_DB_PASSWORD" | gh secret set SUPABASE_DB_PASSWORD
+unset SF_ACCESS_TOKEN SF_DB_PASSWORD
+gh workflow run supabase.yml --ref main
+echo 'Déploiement lancé : gh run list --workflow supabase.yml'
+echo "Ajoutez $APP_URL aux Redirect URLs Supabase Authentication."
+echo 'Les liens copiables fonctionnent sans service e-mail. L’envoi direct réutilise RESEND_API_KEY et JOURNAL_CR_FROM, ou SIGNATUREFLOW_EMAIL_FROM.'

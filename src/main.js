@@ -1,420 +1,1181 @@
-import './style.css'
-import { createClient } from '@supabase/supabase-js'
-import * as pdfjsLib from 'pdfjs-dist'
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import SignaturePad from 'signature_pad'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
-const APP_URL = import.meta.env.VITE_APP_URL || window.location.href.split('?')[0]
-
-const app = document.querySelector('#app')
-const configured = SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes('YOUR_')
-const supabase = configured ? createClient(SUPABASE_URL, SUPABASE_KEY) : null
-
-const state = {
+import "./style.css";
+import { createClient } from "@supabase/supabase-js";
+import * as pdfjs from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import SignaturePad from "signature_pad";
+import { analyzePdf } from "./lib/analyzer.js";
+import { bounded, overlap } from "./lib/detection-core.js";
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+const pdfOptions = {
+  standardFontDataUrl: new URL(
+    `${import.meta.env.BASE_URL}pdf-fonts/`,
+    location.href,
+  ).href,
+};
+const APP_URL = import.meta.env.VITE_APP_URL || location.href.split(/[?#]/)[0];
+const supabase =
+  import.meta.env.VITE_SUPABASE_URL &&
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+    ? createClient(
+        import.meta.env.VITE_SUPABASE_URL,
+        import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      )
+    : null;
+const app = document.querySelector("#app"),
+  $ = (s) => document.querySelector(s);
+const esc = (s = "") =>
+  String(s).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const uuid = () => crypto.randomUUID(),
+  statusNames = {
+    draft: "Brouillon",
+    in_progress: "En signature",
+    signed: "Signé",
+    cancelled: "Annulé",
+    pending: "En attente",
+    signing: "Enregistrement",
+  };
+const kinds = {
+  signature: "Signature",
+  initials: "Paraphe",
+  name: "Nom et prénom",
+  date: "Date de signature",
+  text: "Texte à compléter",
+  checkbox: "Case à cocher",
+};
+const S = {
   session: null,
-  documents: [],
-  currentDoc: null,
+  docs: [],
+  doc: null,
   signers: [],
   fields: [],
   audit: [],
   pdf: null,
-  pdfBytes: null,
+  bytes: null,
   page: 1,
-  scale: 1.35,
-  placementSignerId: null,
-  message: null,
-  draftName: '',
-  draftFile: null,
-  creating: false,
-}
-
-const esc = (s='') => String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))
-const uid = () => crypto.randomUUID()
-
-function layout(content, right='') {
-  return `<div class="app-shell"><header class="topbar"><div class="brand"><div class="brand-mark">✍</div><span>SignatureFlow</span></div><div class="row">${right}</div></header>${content}</div>`
-}
-
-function render() {
-  if (!configured) return renderSetupMissing()
-  if (!state.session) return renderLogin()
-  if (state.currentDoc) return renderEditor()
-  return renderDashboard()
-}
-
-function flash(type, text) {
-  state.message = { type, text }
-  let notice = document.querySelector('#appNotice')
-  if (!notice) {
-    notice = document.createElement('div')
-    notice.id = 'appNotice'
-    notice.setAttribute('role', 'status')
-    app.prepend(notice)
+  selected: null,
+  dirty: false,
+  demo: false,
+  links: [],
+  analysis: null,
+  renderId: 0,
+};
+let resizeObserver,
+  renderTask,
+  analysisController,
+  pads = [];
+const editable = () => S.doc?.status === "draft";
+const check = (r) => {
+  if (r.error) throw r.error;
+  return r.data;
+};
+const date = (v) => (v ? new Date(v).toLocaleString("fr-FR") : "—");
+function notify(text, type = "notice") {
+  let n = $("#notice");
+  if (!n) {
+    n = document.createElement("div");
+    n.id = "notice";
+    n.setAttribute("role", "status");
+    document.body.append(n);
   }
-  notice.className = type
-  notice.textContent = text
+  n.className = type;
+  n.textContent = text;
 }
-
-function messageHtml() {
-  if (!state.message) return ''
-  return `<div class="${state.message.type}">${esc(state.message.text)}</div>`
+function shell(content, right = "") {
+  resizeObserver?.disconnect();
+  pads.forEach((p) => {
+    p.off();
+    p._observer?.disconnect();
+  });
+  pads = [];
+  app.innerHTML = `<header class="topbar"><a class="brand" href="${esc(location.pathname)}" aria-label="SignatureFlow accueil"><span class="brand-mark">S<span>f</span></span>Signature<span class="brand-light">Flow</span></a><div class="row">${S.demo ? '<span class="pill">Essai local</span>' : ""}${right}<span class="version">v2.0</span></div></header>${content}`;
 }
-
-async function boot() {
-  const urlToken = new URLSearchParams(location.search).get('sign')
-  if (urlToken) {
-    sessionStorage.setItem('signatureflow_sign_token', urlToken)
-    history.replaceState({}, '', location.pathname)
+async function busy(button, fn) {
+  if (button?.disabled) return;
+  const label = button?.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Veuillez patienter…";
   }
-  const token = urlToken || sessionStorage.getItem('signatureflow_sign_token')
-  if (token) return renderSigningPage(token)
-
-  if (!configured) return renderSetupMissing()
-  const { data } = await supabase.auth.getSession()
-  state.session = data.session
-  supabase.auth.onAuthStateChange((_event, session) => {
-    const previousUser = state.session?.user?.id
-    state.session = session
-    // A focus/token event must not replace the file input or current editor.
-    if (session && session.user.id !== previousUser) {
-      setTimeout(() => loadDocuments().catch(err => flash('error', err.message)), 0)
-    } else if (!session && previousUser) {
-      state.draftFile = null
-      state.draftName = ''
-      state.currentDoc = null
-      renderLogin()
-    }
-  })
-  if (state.session) await loadDocuments(); else renderLogin()
-}
-
-function renderSetupMissing() {
-  app.innerHTML = layout(`<main class="container"><div class="card auth"><h1>Configuration requise</h1><p class="muted">Copie <span class="kbd">.env.example</span> vers <span class="kbd">.env</span> et renseigne l’URL Supabase et la clé publique.</p><div class="warning">Aucune clé secrète Supabase ne doit être placée dans le navigateur.</div></div></main>`)
-}
-
-function renderLogin() {
-  app.innerHTML = layout(`<main class="container"><div class="card auth stack"><div><h1>Connexion administrateur</h1><p class="muted">Reçois un lien de connexion sécurisé par e-mail.</p></div>${messageHtml()}<div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="prenom.nom@entreprise.fr"></div><button class="btn blue" id="loginBtn">Recevoir le lien de connexion</button></div></main>`)
-  document.querySelector('#loginBtn').onclick = async () => {
-    const email = document.querySelector('#loginEmail').value.trim()
-    if (!email) return
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: APP_URL, shouldCreateUser: false } })
-    if (error) return flash('error', error.message)
-    flash('success', 'Lien de connexion envoyé par e-mail.')
-  }
-}
-
-async function loadDocuments() {
-  state.currentDoc = null
-  const { data, error } = await supabase.from('signatureflow_documents').select('*').order('created_at', { ascending: false })
-  if (error) return flash('error', error.message)
-  state.documents = data || []
-  renderDashboard()
-}
-
-function renderDashboard() {
-  const docs = state.documents.map(d => `<div class="doc-item" data-id="${d.id}"><div class="row between"><strong>${esc(d.name)}</strong><span class="pill ${d.status==='signed'?'signed':'pending'}">${esc(d.status)}</span></div><div class="small muted">${new Date(d.created_at).toLocaleString('fr-FR')}</div></div>`).join('') || '<p class="muted">Aucun document.</p>'
-  app.innerHTML = layout(`<main class="container grid grid-2"><section class="card stack"><div><h2>Nouveau document</h2><p class="muted">Importe un PDF, puis place automatiquement ou manuellement les zones de signature.</p></div>${messageHtml()}<div class="field"><label>Nom du dossier</label><input id="docName" placeholder="Ex. ISF Montereau S38"></div><div class="field"><label>Document PDF</label><input id="docFile" type="file" accept="application/pdf"></div><button class="btn blue" id="createDoc">Créer le dossier</button></section><section class="card"><div class="row between"><div><h2>Documents</h2><p class="muted">Suivi des signatures et téléchargement du PDF courant.</p></div></div><div class="doc-list">${docs}</div></section></main>`, `<span class="small">${esc(state.session.user.email)}</span><button class="btn secondary" id="logout">Déconnexion</button>`)
-  document.querySelector('#logout').onclick = () => supabase.auth.signOut()
-  const nameInput = document.querySelector('#docName')
-  const fileInput = document.querySelector('#docFile')
-  nameInput.value = state.draftName
-  nameInput.oninput = e => { state.draftName = e.target.value }
-  fileInput.accept = '.pdf,application/pdf'
-  const selected = document.createElement('p')
-  selected.id = 'selectedFile'
-  selected.className = 'small muted'
-  selected.setAttribute('aria-live', 'polite')
-  selected.textContent = state.draftFile ? `PDF sélectionné : ${state.draftFile.name}` : 'Aucun PDF sélectionné.'
-  fileInput.after(selected)
-  fileInput.onchange = () => {
-    const file = fileInput.files?.[0]
-    if (!file) return
-    state.draftFile = file
-    if (!nameInput.value.trim()) {
-      state.draftName = file.name.replace(/\.pdf$/i, '')
-      nameInput.value = state.draftName
-    }
-    selected.textContent = `PDF sélectionné : ${file.name} (${Math.ceil(file.size / 1024)} Ko)`
-  }
-  document.querySelector('#createDoc').onclick = createDocument
-  document.querySelectorAll('.doc-item').forEach(el => el.onclick = () => openDocument(el.dataset.id).catch(err => flash('error', `Impossible d’ouvrir le PDF : ${err.message}`)))
-}
-
-async function createDocument() {
-  if (state.creating) return
-  const name = document.querySelector('#docName').value.trim()
-  state.draftName = name
-  const file = state.draftFile || document.querySelector('#docFile').files[0]
-  if (!name || !file) return flash('error', 'Nom et PDF obligatoires.')
-  state.draftFile = file
-  const button = document.querySelector('#createDoc')
-  state.creating = true
-  button.disabled = true
-  button.textContent = 'Chargement du PDF…'
   try {
-  const header = new TextDecoder().decode(await file.slice(0, 1024).arrayBuffer())
-  if (!header.includes('%PDF-')) throw new Error('Ce fichier n’est pas un PDF valide. Exporte le document au format PDF puis réessaie.')
-  const docId = uid()
-  const owner = state.session.user.id
-  const storagePath = `${owner}/${docId}/original.pdf`
-  const { error: insertError } = await supabase.from('signatureflow_documents').insert({ id: docId, owner_id: owner, name, storage_path: storagePath, current_storage_path: storagePath })
-  if (insertError) return flash('error', insertError.message)
-  const { error: uploadError } = await supabase.storage.from('signatureflow-documents').upload(storagePath, file, { contentType: 'application/pdf', upsert: false })
-  if (uploadError) {
-    const { error: cleanupError } = await supabase.from('signatureflow_documents').delete().eq('id', docId)
-    return flash('error', `${uploadError.message}${cleanupError ? ' — Le dossier incomplet n’a pas pu être supprimé.' : ''}`)
-  }
-  state.draftFile = null
-  state.draftName = ''
-  await loadDocuments()
-  await openDocument(docId)
-  } catch (err) {
-    flash('error', `Impossible de charger le PDF : ${err.message || 'Erreur inconnue'}`)
+    return await fn();
+  } catch (e) {
+    notify(e.message || "Une erreur est survenue.", "error");
   } finally {
-    state.creating = false
-    button.disabled = false
-    button.textContent = 'Créer le dossier'
-  }
-}
-
-async function openDocument(id) {
-  const { data: doc, error } = await supabase.from('signatureflow_documents').select('*').eq('id', id).single()
-  if (error) return flash('error', error.message)
-  const [{ data: signers }, { data: fields }, { data: audit }] = await Promise.all([
-    supabase.from('signatureflow_signers').select('*').eq('document_id', id).order('signing_order'),
-    supabase.from('signatureflow_signature_fields').select('*').eq('document_id', id).order('page'),
-    supabase.from('signatureflow_audit_events').select('*').eq('document_id', id).order('created_at', { ascending: false }).limit(25)
-  ])
-  state.currentDoc = doc
-  state.signers = signers || []
-  state.fields = fields || []
-  state.audit = audit || []
-  state.page = 1
-  state.placementSignerId = null
-  try {
-    await loadPdfForAdmin()
-  } catch (err) {
-    state.currentDoc = null
-    state.pdf = null
-    renderDashboard()
-    throw err
-  }
-  renderEditor()
-}
-
-async function loadPdfForAdmin() {
-  const path = state.currentDoc.current_storage_path || state.currentDoc.storage_path
-  const { data, error } = await supabase.storage.from('signatureflow-documents').download(path)
-  if (error) throw error
-  state.pdfBytes = await data.arrayBuffer()
-  state.pdf = await pdfjsLib.getDocument({ data: state.pdfBytes.slice(0) }).promise
-}
-
-function renderEditor() {
-  const signerOptions = state.signers.map(s => `<option value="${s.id}">${esc(s.name)} — ${esc(s.email)}</option>`).join('')
-  const signers = state.signers.map(s => `<div class="signer-card stack"><div class="row between"><div><strong>${esc(s.name)}</strong><div class="small muted">${esc(s.email)}</div></div><span class="pill ${s.status==='signed'?'signed':'pending'}">${esc(s.status)}</span></div><div class="small">Ordre : ${s.signing_order}${s.signed_at ? ` · signé ${new Date(s.signed_at).toLocaleString('fr-FR')}` : ''}</div>${s.status!=='signed' ? `<button class="btn secondary small remove-signer" data-id="${s.id}">Retirer</button>` : ''}</div>`).join('') || '<p class="muted">Ajoute au moins un signataire.</p>'
-  const audit = state.audit.map(a => `<div class="signer-card"><strong>${esc(a.event_type)}</strong><div class="small muted">${new Date(a.created_at).toLocaleString('fr-FR')}</div></div>`).join('') || '<p class="muted">Aucun événement.</p>'
-  app.innerHTML = layout(`<main class="container grid grid-3"><aside class="card stack"><div><h3>${esc(state.currentDoc.name)}</h3><div class="small muted">Statut : ${esc(state.currentDoc.status)}</div></div>${messageHtml()}<hr><div><h3>Signataires</h3></div><div class="field"><label>Nom</label><input id="signerName"></div><div class="field"><label>E-mail</label><input id="signerEmail" type="email"></div><button class="btn" id="addSigner">Ajouter</button><div class="stack">${signers}</div><button class="btn blue" id="sendInvites" ${state.signers.length?'':'disabled'}>Envoyer les liens de signature</button><button class="btn secondary" id="back">← Documents</button></aside><section class="card"><div class="toolbar"><button class="btn secondary" id="prevPage">←</button><strong>Page <span id="pageNum">${state.page}</span> / ${state.pdf.numPages}</strong><button class="btn secondary" id="nextPage">→</button><button class="btn blue" id="autoDetect" ${state.signers.length?'':'disabled'}>Analyser les signatures</button><select id="placeSigner" style="max-width:260px"><option value="">Placement manuel…</option>${signerOptions}</select><button class="btn secondary" id="saveFields">Enregistrer les zones</button></div><div class="notice small">Analyse automatique : recherche les libellés “signature”, “signataire”, “visa”, “signé”. Pour un PDF scanné ou une mise en page ambiguë, utilise le placement manuel.</div><div id="pdfHost" style="margin-top:14px"></div></section><aside class="card stack"><h3>Zones de signature</h3><div id="fieldList"></div><div class="warning small">Les liens sont individuels. Un signataire reçoit uniquement l’accès temporaire nécessaire à son document.</div><button class="btn secondary" id="refreshDoc">Actualiser les statuts</button><button class="btn secondary" id="downloadCurrent">Télécharger le PDF courant</button><hr><h3>Historique</h3><div class="stack">${audit}</div></aside></main>`, `<button class="btn secondary" id="logout">Déconnexion</button>`)
-  document.querySelector('#logout').onclick = () => supabase.auth.signOut()
-  document.querySelector('#back').onclick = () => loadDocuments()
-  document.querySelector('#addSigner').onclick = addSigner
-  document.querySelector('#sendInvites').onclick = sendInvites
-  document.querySelector('#prevPage').onclick = async () => { if (state.page > 1) { state.page--; await drawEditorPage() } }
-  document.querySelector('#nextPage').onclick = async () => { if (state.page < state.pdf.numPages) { state.page++; await drawEditorPage() } }
-  document.querySelector('#autoDetect').onclick = autoDetectFields
-  document.querySelector('#placeSigner').onchange = e => { state.placementSignerId = e.target.value || null; drawEditorPage() }
-  document.querySelector('#saveFields').onclick = saveFields
-  document.querySelector('#refreshDoc').onclick = () => openDocument(state.currentDoc.id)
-  document.querySelector('#downloadCurrent').onclick = downloadCurrent
-  document.querySelectorAll('.remove-signer').forEach(el => el.onclick = () => removeSigner(el.dataset.id))
-  drawEditorPage()
-  drawFieldList()
-}
-
-async function removeSigner(id) {
-  const signer = state.signers.find(s => s.id === id)
-  if (!signer || signer.status === 'signed') return
-  const { error } = await supabase.from('signatureflow_signers').delete().eq('id', id)
-  if (error) return flash('error', error.message)
-  state.signers = state.signers.filter(s => s.id !== id)
-  state.fields = state.fields.filter(f => f.signer_id !== id)
-  renderEditor()
-}
-
-async function addSigner() {
-  const name = document.querySelector('#signerName').value.trim()
-  const email = document.querySelector('#signerEmail').value.trim().toLowerCase()
-  if (!name || !email) return flash('error', 'Nom et e-mail obligatoires.')
-  const signing_order = (state.signers.at(-1)?.signing_order || 0) + 1
-  const { data, error } = await supabase.from('signatureflow_signers').insert({ document_id: state.currentDoc.id, name, email, signing_order }).select().single()
-  if (error) return flash('error', error.message)
-  state.signers.push(data)
-  renderEditor()
-}
-
-async function drawEditorPage() {
-  const page = await state.pdf.getPage(state.page)
-  const viewport = page.getViewport({ scale: state.scale })
-  const host = document.querySelector('#pdfHost')
-  if (!host) return
-  host.innerHTML = `<div class="pdf-wrap"><div class="pdf-stage" id="stage"><canvas id="pdfCanvas"></canvas></div></div>`
-  const canvas = document.querySelector('#pdfCanvas')
-  canvas.width = viewport.width
-  canvas.height = viewport.height
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-  const stage = document.querySelector('#stage')
-  stage.style.width = `${viewport.width}px`; stage.style.height = `${viewport.height}px`
-  state.fields.filter(f => Number(f.page) === state.page).forEach(f => renderFieldOverlay(stage, f, viewport))
-  stage.onclick = e => {
-    if (!state.placementSignerId || e.target.classList.contains('sig-field')) return
-    const r = stage.getBoundingClientRect()
-    const x = (e.clientX - r.left) / r.width
-    const y = (e.clientY - r.top) / r.height
-    state.fields.push({ id: uid(), document_id: state.currentDoc.id, signer_id: state.placementSignerId, page: state.page, x: Math.min(x, .72), y: Math.min(y, .88), width: .25, height: .09, _new: true })
-    drawEditorPage(); drawFieldList()
-  }
-  document.querySelector('#pageNum').textContent = state.page
-}
-
-function renderFieldOverlay(stage, f, viewport) {
-  const el = document.createElement('div')
-  const signer = state.signers.find(s => s.id === f.signer_id)
-  el.className = `sig-field ${signer?.status==='signed'?'signed':''}`
-  el.style.left = `${f.x * viewport.width}px`
-  el.style.top = `${f.y * viewport.height}px`
-  el.style.width = `${f.width * viewport.width}px`
-  el.style.height = `${f.height * viewport.height}px`
-  el.textContent = signer ? signer.name : 'Signature'
-  el.title = 'Cliquer pour supprimer cette zone'
-  el.onclick = ev => { ev.stopPropagation(); state.fields = state.fields.filter(x => x.id !== f.id); drawEditorPage(); drawFieldList() }
-  stage.appendChild(el)
-}
-
-function drawFieldList() {
-  const el = document.querySelector('#fieldList'); if (!el) return
-  el.innerHTML = state.fields.map(f => { const s = state.signers.find(x => x.id===f.signer_id); return `<div class="signer-card"><strong>${esc(s?.name || 'Inconnu')}</strong><div class="small muted">Page ${f.page} · x ${Number(f.x).toFixed(2)} · y ${Number(f.y).toFixed(2)}</div></div>` }).join('') || '<p class="muted">Aucune zone.</p>'
-}
-
-async function autoDetectFields() {
-  if (!state.signers.length) return
-  const found = []
-  let signerIndex = 0
-  for (let p = 1; p <= state.pdf.numPages; p++) {
-    const page = await state.pdf.getPage(p)
-    const viewport = page.getViewport({ scale: 1 })
-    const text = await page.getTextContent()
-    for (const item of text.items) {
-      const value = String(item.str || '').toLowerCase()
-      if (!/(signature|signataire|visa|signé|signe ici)/i.test(value)) continue
-      const transformed = pdfjsLib.Util.transform(viewport.transform, item.transform)
-      const tx = transformed[4]
-      const ty = transformed[5]
-      const x = Math.max(0.02, Math.min(0.72, tx / viewport.width))
-      const yTop = Math.max(0.02, Math.min(0.86, ty / viewport.height))
-      const signer = state.signers[signerIndex % state.signers.length]
-      found.push({ id: uid(), document_id: state.currentDoc.id, signer_id: signer.id, page: p, x, y: Math.min(.88, yTop + .02), width: .25, height: .09, _new: true })
-      signerIndex++
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = label;
     }
   }
-  if (!found.length) return flash('warning', 'Aucun libellé de signature détecté. Utilise le placement manuel.')
-  state.fields = found
-  state.page = found[0].page
-  await drawEditorPage(); drawFieldList(); flash('success', `${found.length} zone(s) détectée(s). Vérifie leur position avant enregistrement.`)
 }
-
+async function invoke(name, body) {
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (error) {
+    let message = error.message;
+    try {
+      message = (await error.context.json()).error || message;
+    } catch {}
+    throw new Error(message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+function download(blob, name) {
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
+const fileName = () => S.doc.name.replace(/[^\p{L}\p{N}._-]/gu, "_");
+function dirty() {
+  S.dirty = true;
+  $("#savedState")?.replaceChildren(
+    document.createTextNode("Modifications à enregistrer"),
+  );
+}
+window.addEventListener("beforeunload", (e) => {
+  if (S.dirty) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+window.addEventListener("unhandledrejection", (e) =>
+  notify(e.reason?.message || "Opération interrompue", "error"),
+);
+async function boot() {
+  const token =
+    new URLSearchParams(location.hash.slice(1)).get("sign") ||
+    new URLSearchParams(location.search).get("sign");
+  if (token) {
+    sessionStorage.setItem("signatureflow_sign_token", token);
+    history.replaceState({}, "", location.pathname);
+  }
+  const requestedDocument = new URLSearchParams(location.search).get(
+    "document",
+  );
+  if (requestedDocument && /^[a-f0-9-]{36}$/.test(requestedDocument))
+    sessionStorage.setItem("signatureflow_open_document", requestedDocument);
+  const stored = token || sessionStorage.getItem("signatureflow_sign_token");
+  if (stored) return signingPage(stored);
+  if (!supabase) return login();
+  S.session = check(await supabase.auth.getSession()).session;
+  supabase.auth.onAuthStateChange((_e, session) => {
+    const previous = S.session?.user.id;
+    S.session = session;
+    if (session?.user.id && session.user.id !== previous && !S.demo)
+      setTimeout(() => dashboard().catch((e) => notify(e.message, "error")), 0);
+    if (!session && previous && !S.demo) login();
+  });
+  if (S.session) await dashboard();
+  else login();
+}
+function login() {
+  shell(
+    `<main class="welcome"><section class="intro"><div class="eyebrow">VOS DOCUMENTS. LEURS SIGNATURES.</div><h1>Du document<br>à la signature,<br><em>en quelques gestes.</em></h1><p>Préparez vos PDF, indiquez qui signe et partagez un lien personnel. Chacun peut lire et signer depuis son téléphone.</p><div class="steps"><span>01 · Importer</span><span>02 · Préparer</span><span>03 · Faire signer</span></div></section><section class="card auth"><span class="eyebrow">ESPACE ORGANISATEUR</span><h2>Ouvrir mon espace</h2><p class="muted">Connectez-vous avec le compte utilisé pour votre Journal de Chantier.</p><form id="loginForm" class="stack"><label>E-mail professionnel<input required id="email" type="email" autocomplete="email" placeholder="vous@entreprise.fr"></label><button class="btn primary" ${supabase ? "" : "disabled"}>Recevoir mon lien de connexion →</button></form>${supabase ? "" : '<p class="warning">Renseignez les deux variables Supabase dans .env pour activer les liens de signature.</p>'}<hr><button class="btn secondary" id="demo">Essayer l’analyse sur mon PDF</button><p class="small muted">L’essai analyse le PDF sur cet appareil. Pour partager un lien, connectez-vous à votre espace.</p></section></main>`,
+  );
+  $("#loginForm").onsubmit = (e) => {
+    e.preventDefault();
+    busy(e.submitter, async () => {
+      check(
+        await supabase.auth.signInWithOtp({
+          email: $("#email").value.trim(),
+          options: { emailRedirectTo: APP_URL, shouldCreateUser: false },
+        }),
+      );
+      notify(
+        "Lien de connexion envoyé. Consultez votre messagerie.",
+        "success",
+      );
+    });
+  };
+  $("#demo").onclick = () => {
+    S.demo = true;
+    S.docs = [];
+    dashboard();
+  };
+}
+async function dashboard() {
+  S.doc = null;
+  S.dirty = false;
+  S.links = [];
+  await S.pdf?.destroy();
+  S.pdf = null;
+  if (!S.demo && S.session) {
+    const pending = sessionStorage.getItem("signatureflow_open_document");
+    if (pending) {
+      sessionStorage.removeItem("signatureflow_open_document");
+      try {
+        return await openDocument(pending);
+      } catch (e) {
+        notify("Le dossier demandé est inaccessible : " + e.message, "error");
+      }
+    }
+  }
+  if (!S.demo)
+    S.docs = check(
+      await supabase
+        .from("signatureflow_documents")
+        .select("*")
+        .order("created_at", { ascending: false }),
+    );
+  const count = (s) => S.docs.filter((d) => d.status === s).length;
+  shell(
+    `<main class="container"><div class="page-heading"><div><span class="eyebrow">ESPACE DOCUMENTS</span><h1>Les signatures avancent.</h1><p class="muted">Préparez un document et suivez chaque réponse au même endroit.</p></div><button class="btn secondary" id="logout">${S.demo ? "Quitter l’essai" : "Déconnexion"}</button></div><div class="metrics"><div><strong>${count("draft")}</strong><span>À préparer</span></div><div><strong>${count("in_progress")}</strong><span>En signature</span></div><div><strong>${count("signed")}</strong><span>Finalisés</span></div></div><div class="dashboard-grid"><section class="card stack"><span class="eyebrow">NOUVEAU DOCUMENT</span><h2>Commencez par votre PDF</h2><form id="uploadForm" class="stack"><label class="dropzone">↥<strong>Choisir un document PDF</strong><span>20 Mo maximum · 200 pages</span><input id="file" type="file" accept=".pdf,application/pdf" required></label><label>Nom du document<input id="docName" required maxlength="200" placeholder="Ex. Briefing · Montereau · S49"></label><label>Référence du chantier (facultatif)<input id="sourceRef" maxlength="200" placeholder="Nom ou identifiant Journal de Chantier"></label><button class="btn primary">Importer et préparer →</button></form></section><section class="card"><div class="row between"><h2>Mes documents</h2><label class="sr-only" for="filter">Rechercher</label><input id="filter" class="search" placeholder="Rechercher un document…"></div><div id="documentList"></div></section></div></main>`,
+  );
+  const list = () => {
+    $("#documentList").innerHTML =
+      S.docs
+        .filter((d) =>
+          d.name.toLowerCase().includes($("#filter").value.toLowerCase()),
+        )
+        .map(
+          (d) =>
+            `<button class="document-row" data-doc="${d.id}"><span class="pdf-icon">PDF</span><span class="document-title"><strong>${esc(d.name)}</strong><small>${esc(d.source_ref || "Document PDF")} · ${date(d.created_at)}</small></span><span class="pill ${d.status}">${statusNames[d.status]}</span><span>↗</span></button>`,
+        )
+        .join("") ||
+      '<div class="empty"><span>↗</span><h3>Tout commence par un document.</h3><p>Importez votre PDF pour préparer la première signature.</p></div>';
+    document
+      .querySelectorAll("[data-doc]")
+      .forEach(
+        (el) =>
+          (el.onclick = () => busy(el, () => openDocument(el.dataset.doc))),
+      );
+  };
+  list();
+  $("#filter").oninput = list;
+  $("#logout").onclick = () => {
+    S.demo = false;
+    if (S.session) supabase.auth.signOut();
+    else login();
+  };
+  $("#file").onchange = (e) => {
+    if (!$("#docName").value)
+      $("#docName").value =
+        e.target.files[0]?.name.replace(/\.pdf$/i, "") || "";
+  };
+  $("#uploadForm").onsubmit = (e) => {
+    e.preventDefault();
+    busy(e.submitter, createDocument);
+  };
+}
+async function createDocument() {
+  const file = $("#file").files[0],
+    name = $("#docName").value.trim(),
+    source_ref = $("#sourceRef").value.trim();
+  if (!file || !name) throw new Error("Choisissez un PDF et un nom.");
+  if (file.size > 20 * 1024 * 1024) throw new Error("Le PDF dépasse 20 Mo.");
+  const bytes = await file.arrayBuffer();
+  if (!new TextDecoder().decode(bytes.slice(0, 1024)).includes("%PDF-"))
+    throw new Error("Fichier PDF invalide.");
+  const pdf = await pdfjs.getDocument({ ...pdfOptions, data: bytes.slice(0) })
+    .promise;
+  if (pdf.numPages > 200) {
+    await pdf.destroy();
+    throw new Error("Le document dépasse 200 pages.");
+  }
+  const id = uuid(),
+    storage_path = `${S.session?.user.id}/${id}/original.pdf`;
+  const doc = {
+    id,
+    name,
+    source_ref,
+    status: "draft",
+    signing_mode: "parallel",
+    page_count: pdf.numPages,
+    storage_path,
+    current_storage_path: storage_path,
+    owner_id: S.session?.user.id,
+  };
+  if (!S.demo) {
+    check(await supabase.from("signatureflow_documents").insert(doc));
+    try {
+      check(
+        await supabase.storage
+          .from("signatureflow-documents")
+          .upload(storage_path, file, { contentType: "application/pdf" }),
+      );
+    } catch (e) {
+      await supabase.from("signatureflow_documents").delete().eq("id", id);
+      throw e;
+    }
+  }
+  S.doc = doc;
+  S.pdf = pdf;
+  S.bytes = bytes;
+  S.signers = [];
+  S.fields = [];
+  S.audit = [];
+  S.page = 1;
+  S.selected = null;
+  S.links = [];
+  S.dirty = false;
+  editor();
+}
+async function openDocument(id) {
+  const doc = check(
+    await supabase
+      .from("signatureflow_documents")
+      .select("*")
+      .eq("id", id)
+      .single(),
+  );
+  const result = await Promise.all([
+    supabase
+      .from("signatureflow_signers")
+      .select("id,document_id,name,email,role,signing_order,status,signed_at")
+      .eq("document_id", id)
+      .order("signing_order"),
+    supabase
+      .from("signatureflow_signature_fields")
+      .select("*")
+      .eq("document_id", id)
+      .order("page"),
+    supabase
+      .from("signatureflow_audit_events")
+      .select("*")
+      .eq("document_id", id)
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
+  const blob = check(
+      await supabase.storage
+        .from("signatureflow-documents")
+        .download(doc.current_storage_path),
+    ),
+    bytes = await blob.arrayBuffer(),
+    pdf = await pdfjs.getDocument({ ...pdfOptions, data: bytes.slice(0) })
+      .promise;
+  await S.pdf?.destroy();
+  S.doc = doc;
+  S.bytes = bytes;
+  S.pdf = pdf;
+  S.signers = check(result[0]);
+  S.fields = check(result[1]).map((f) => ({ ...f, confirmed: true }));
+  S.audit = check(result[2]);
+  S.page = 1;
+  S.selected = null;
+  S.links = [];
+  S.dirty = false;
+  editor();
+}
+function signerOptions(current = "", empty = true) {
+  return (
+    (empty ? '<option value="">Choisir un signataire…</option>' : "") +
+    S.signers
+      .map(
+        (s) =>
+          `<option value="${s.id}" ${s.id === current ? "selected" : ""}>${esc(s.name)}</option>`,
+      )
+      .join("")
+  );
+}
+function kindOptions(current = "signature") {
+  return Object.entries(kinds)
+    .map(
+      ([k, v]) =>
+        `<option value="${k}" ${k === current ? "selected" : ""}>${v}</option>`,
+    )
+    .join("");
+}
+function editor() {
+  const edit = editable();
+  shell(
+    `<main class="editor-shell"><div class="editor-heading"><button class="btn secondary" id="back">← Documents</button><div><h1>${esc(S.doc.name)}</h1><p class="small muted">${esc(S.doc.source_ref || "")} <span class="pill ${S.doc.status}">${statusNames[S.doc.status]}</span></p></div><div class="row"><button class="btn secondary" id="download">↓ PDF</button>${!S.demo ? '<button class="btn secondary" id="refresh">Actualiser</button>' : ""}</div></div><div class="editor-grid"><aside class="card preparation stack"><span class="eyebrow">01 · LES DESTINATAIRES</span><h2>Qui doit signer ?</h2><div id="signerList" class="stack"></div>${edit ? `<form id="signerForm" class="stack"><label>Nom et prénom<input id="signerName" required maxlength="160"></label><label>E-mail<input id="signerEmail" required type="email" maxlength="254"></label><label>Rôle dans le document<input id="signerRole" placeholder="Ex. Responsable travaux" maxlength="100"></label><button class="btn secondary">+ Ajouter un signataire</button></form><hr><label>Ordre de signature<select id="signingMode"><option value="parallel" ${S.doc.signing_mode === "parallel" ? "selected" : ""}>Chacun peut signer dès réception</option><option value="sequential" ${S.doc.signing_mode === "sequential" ? "selected" : ""}>Dans l’ordre des signataires</option></select></label>` : '<p class="notice small">Le document est figé depuis la création des liens.</p>'}<hr><span class="eyebrow">03 · LE PARTAGE</span><button id="shareLinks" class="btn primary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>${S.doc.status === "draft" ? "Créer les liens personnels" : "Renouveler les liens"}</button><button id="emailLinks" class="btn secondary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>Envoyer les invitations par e-mail</button><div id="linkList" class="stack"></div>${S.demo ? '<p class="small muted">Connectez-vous pour enregistrer un dossier et faire signer votre document.</p>' : ""}${!S.demo && S.doc.status === "in_progress" ? '<button class="btn danger" id="cancelEnvelope">Annuler les liens de ce dossier</button>' : ""}</aside><section class="pdf-column"><div class="card toolbar"><div class="row"><button class="btn secondary icon" id="prev" aria-label="Page précédente">←</button><label class="page-control">Page <input id="pageInput" type="number" min="1" max="${S.pdf.numPages}" value="${S.page}"> / ${S.pdf.numPages}</label><button class="btn secondary icon" id="next" aria-label="Page suivante">→</button></div>${edit ? `<div class="row"><select id="ocrMode" aria-label="Mode OCR"><option value="auto">OCR si PDF scanné</option><option value="always">OCR sur toutes les pages</option><option value="never">Sans OCR</option></select><button class="btn primary" id="analyze">Analyser le PDF</button><button class="btn secondary" id="stopAnalysis" hidden>Arrêter</button></div>` : ""}</div><div id="analysisStatus" class="small muted" aria-live="polite"></div><div class="pdf-host" id="pdfHost"></div>${edit ? `<div class="card manual-tools"><span class="eyebrow">AJOUTER UNE ZONE</span><div class="row"><select id="manualSigner" aria-label="Signataire de la zone">${signerOptions()}</select><select id="manualKind" aria-label="Type de zone">${kindOptions()}</select><button class="btn secondary" id="place">+ Placer sur la page</button></div><p class="small muted">Cliquez sur le PDF, puis déplacez la zone ou étirez sa poignée. Sélectionnez une zone pour la modifier.</p></div>` : ""}</section><aside class="card review stack"><span class="eyebrow">02 · LES EMPLACEMENTS</span><div class="row between"><h2>Zones du document</h2><span id="zoneCount" class="pill"></span></div><div id="fieldList" class="stack"></div><div id="fieldDetail"></div>${edit ? '<button class="btn primary" id="save">Enregistrer les zones</button><div class="small muted" id="savedState">Zones enregistrées</div>' : ""}<hr><h3>Suivi du dossier</h3><div class="audit-list">${
+      S.audit
+        .slice(0, 20)
+        .map(
+          (a) =>
+            `<div><strong>${esc({ document_signed: "Signature enregistrée", links_issued: "Liens créés", document_opened: "Document ouvert", invitation_sent: "Invitation envoyée", email_error: "Échec de l’envoi", document_cancelled: "Dossier annulé" }[a.event_type] || a.event_type)}</strong><small>${date(a.created_at)}</small></div>`,
+        )
+        .join("") ||
+      '<p class="small muted">Les ouvertures et signatures apparaîtront ici.</p>'
+    }</div>${!S.demo ? '<button class="btn secondary" id="auditExport">Exporter les preuves (JSON)</button>' : ""}</aside></div></main>`,
+  );
+  $("#back").onclick = () => {
+    if (S.dirty && !confirm("Quitter sans enregistrer les zones ?")) return;
+    analysisController?.abort();
+    dashboard();
+  };
+  $("#download").onclick = () =>
+    download(
+      new Blob([S.bytes], { type: "application/pdf" }),
+      fileName() + ".pdf",
+    );
+  $("#refresh")?.addEventListener("click", (e) =>
+    busy(e.target, () => {
+      if (S.dirty && !confirm("Actualiser et abandonner les modifications ?"))
+        return;
+      return openDocument(S.doc.id);
+    }),
+  );
+  $("#auditExport")?.addEventListener("click", (e) =>
+    busy(e.target, async () => {
+      const all = [];
+      for (let from = 0; ; from += 1000) {
+        const rows = check(
+          await supabase
+            .from("signatureflow_audit_events")
+            .select("*")
+            .eq("document_id", S.doc.id)
+            .order("id")
+            .range(from, from + 999),
+        );
+        all.push(...rows);
+        if (rows.length < 1000) break;
+      }
+      download(
+        new Blob(
+          [
+            JSON.stringify(
+              {
+                format: "SignatureFlow evidence v2",
+                document: S.doc,
+                signers: S.signers,
+                fields: S.fields,
+                events: all,
+              },
+              null,
+              2,
+            ),
+          ],
+          { type: "application/json" },
+        ),
+        fileName() + "-preuves.json",
+      );
+    }),
+  );
+  $("#prev").onclick = () => goPage(S.page - 1);
+  $("#next").onclick = () => goPage(S.page + 1);
+  $("#pageInput").onchange = (e) => goPage(Number(e.target.value));
+  if (edit) {
+    $("#signerForm").onsubmit = (e) => {
+      e.preventDefault();
+      busy(e.submitter, addSigner);
+    };
+    $("#signingMode").onchange = (e) =>
+      busy(null, async () => {
+        const signing_mode = e.target.value;
+        if (!S.demo)
+          check(
+            await supabase
+              .from("signatureflow_documents")
+              .update({ signing_mode })
+              .eq("id", S.doc.id),
+          );
+        S.doc.signing_mode = signing_mode;
+      });
+    $("#analyze").onclick = (e) => busy(e.target, runAnalysis);
+    $("#stopAnalysis").onclick = () => analysisController?.abort();
+    $("#save").onclick = (e) => busy(e.target, saveFields);
+    $("#place").onclick = () => {
+      if (!$("#manualSigner").value)
+        return notify("Choisissez d’abord le signataire.", "warning");
+      S.placing = {
+        signer: $("#manualSigner").value,
+        kind: $("#manualKind").value,
+      };
+      $("#pdfHost").classList.add("placing");
+      notify("Cliquez à l’emplacement souhaité dans la page.");
+    };
+  }
+  $("#shareLinks").onclick = (e) => busy(e.target, () => issueLinks("links"));
+  $("#emailLinks").onclick = (e) => busy(e.target, () => issueLinks("email"));
+  $("#cancelEnvelope")?.addEventListener("click", (e) => {
+    if (confirm("Annuler ce dossier et désactiver ses liens personnels ?"))
+      busy(e.target, async () => {
+        await invoke("signatureflow-invite-signer", {
+          documentId: S.doc.id,
+          action: "cancel",
+        });
+        await openDocument(S.doc.id);
+      });
+  });
+  if (S.dirty && $("#savedState"))
+    $("#savedState").textContent = "Modifications à enregistrer";
+  drawSigners();
+  drawFields();
+  drawPage();
+  resizeObserver = new ResizeObserver(() => {
+    clearTimeout(S.resizeTimer);
+    S.resizeTimer = setTimeout(() => drawPage(), 180);
+  });
+  resizeObserver.observe($("#pdfHost"));
+}
+function drawSigners() {
+  $("#signerList").innerHTML =
+    S.signers
+      .map(
+        (s, i) =>
+          `<div class="signer-item" style="--signer-color:${["#3563e9", "#a34ab9", "#168476", "#b2781c"][i % 4]}"><span class="avatar">${esc(s.name.slice(0, 1))}</span><div><strong>${esc(s.name)}</strong><small>${esc(s.role || s.email)}</small><span class="small">${i + 1} · ${statusNames[s.status || "pending"]}</span></div>${editable() ? `<button class="remove-signer" data-id="${s.id}" aria-label="Retirer ${esc(s.name)}">×</button>` : ""}</div>`,
+      )
+      .join("") ||
+    '<p class="small muted">Ajoutez les personnes qui doivent lire et signer ce document.</p>';
+  document.querySelectorAll(".remove-signer").forEach(
+    (el) =>
+      (el.onclick = () =>
+        busy(el, async () => {
+          if (!S.demo)
+            check(
+              await supabase
+                .from("signatureflow_signers")
+                .delete()
+                .eq("id", el.dataset.id),
+            );
+          S.signers = S.signers.filter((s) => s.id !== el.dataset.id);
+          S.fields = S.fields.filter((f) => f.signer_id !== el.dataset.id);
+          dirty();
+          editor();
+        })),
+  );
+}
+async function addSigner() {
+  const name = $("#signerName").value.trim(),
+    email = $("#signerEmail").value.trim().toLowerCase(),
+    role = $("#signerRole").value.trim();
+  if (S.signers.some((s) => s.email === email))
+    throw new Error("Cette adresse figure déjà dans les signataires.");
+  if (S.signers.length >= 40)
+    throw new Error("Un dossier est limité à 40 signataires.");
+  const signer = {
+    id: uuid(),
+    document_id: S.doc.id,
+    name,
+    email,
+    role,
+    signing_order: Math.max(0, ...S.signers.map((s) => s.signing_order)) + 1,
+  };
+  if (!S.demo)
+    check(await supabase.from("signatureflow_signers").insert(signer));
+  S.signers.push({ ...signer, status: "pending" });
+  editor();
+}
+function goPage(p) {
+  if (!Number.isInteger(p) || p < 1 || p > S.pdf.numPages) return;
+  S.page = p;
+  $("#pageInput").value = p;
+  drawPage();
+}
+async function drawPage() {
+  const id = ++S.renderId,
+    host = $("#pdfHost");
+  if (!host || !S.pdf) return;
+  renderTask?.cancel();
+  const page = await S.pdf.getPage(S.page);
+  if (id !== S.renderId) return;
+  const width = Math.max(220, host.clientWidth - 32),
+    viewport = page.getViewport({
+      scale: width / page.getViewport({ scale: 1 }).width,
+    });
+  host.innerHTML =
+    '<div id="stage" class="pdf-stage"><canvas></canvas><div class="overlays"></div></div>';
+  const stage = $("#stage"),
+    canvas = stage.querySelector("canvas"),
+    ratio = Math.min(devicePixelRatio || 1, 2);
+  stage.style.width = viewport.width + "px";
+  stage.style.height = viewport.height + "px";
+  canvas.width = Math.ceil(viewport.width * ratio);
+  canvas.height = Math.ceil(viewport.height * ratio);
+  canvas.style.width = viewport.width + "px";
+  canvas.style.height = viewport.height + "px";
+  renderTask = page.render({
+    canvasContext: canvas.getContext("2d"),
+    viewport,
+    transform: [ratio, 0, 0, ratio, 0, 0],
+  });
+  try {
+    await renderTask.promise;
+  } catch (e) {
+    if (e.name === "RenderingCancelledException") return;
+    throw e;
+  }
+  if (id !== S.renderId) return;
+  drawOverlays();
+  stage.onclick = (e) => {
+    if (!S.placing || !editable()) return;
+    const r = stage.getBoundingClientRect(),
+      f = bounded({
+        id: uuid(),
+        document_id: S.doc.id,
+        signer_id: S.placing.signer,
+        page: S.page,
+        kind: S.placing.kind,
+        x: (e.clientX - r.left) / r.width,
+        y: (e.clientY - r.top) / r.height,
+        width: S.placing.kind === "checkbox" ? 0.035 : 0.28,
+        height:
+          S.placing.kind === "checkbox"
+            ? 0.025
+            : ["signature", "initials"].includes(S.placing.kind)
+              ? 0.075
+              : 0.035,
+        label: kinds[S.placing.kind],
+        required: true,
+        confirmed: true,
+        detection_source: "manual",
+      });
+    S.fields.push(f);
+    S.selected = f.id;
+    S.placing = null;
+    host.classList.remove("placing");
+    dirty();
+    drawFields();
+    drawOverlays();
+  };
+}
+function drawOverlays() {
+  const stage = $("#stage"),
+    layer = stage?.querySelector(".overlays");
+  if (!layer) return;
+  layer.innerHTML = "";
+  for (const f of S.fields.filter((f) => f.page === S.page)) {
+    const signer = S.signers.find((s) => s.id === f.signer_id),
+      el = document.createElement("div");
+    el.className = `sig-field ${f.id === S.selected ? "active" : ""} ${f.confirmed ? "" : "unconfirmed"}`;
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.setAttribute(
+      "aria-label",
+      `${kinds[f.kind]} : ${signer?.name || "À attribuer"}`,
+    );
+    const position = () => {
+      Object.assign(el.style, {
+        left: f.x * 100 + "%",
+        top: f.y * 100 + "%",
+        width: f.width * 100 + "%",
+        height: f.height * 100 + "%",
+      });
+    };
+    position();
+    el.innerHTML = `<span>${esc(signer?.name || "À attribuer")}<small>${esc(kinds[f.kind])}</small></span>${editable() ? '<i class="resize-handle" aria-hidden="true"></i>' : ""}`;
+    el.onclick = (e) => {
+      e.stopPropagation();
+      S.selected = f.id;
+      drawFields();
+      drawOverlays();
+    };
+    if (editable()) {
+      el.onpointerdown = (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const start = { ...f },
+          x = e.clientX,
+          y = e.clientY,
+          r = stage.getBoundingClientRect(),
+          resize = e.target.classList.contains("resize-handle");
+        el.setPointerCapture(e.pointerId);
+        el.onpointermove = (ev) => {
+          const dx = (ev.clientX - x) / r.width,
+            dy = (ev.clientY - y) / r.height;
+          Object.assign(
+            f,
+            bounded({
+              ...start,
+              ...(resize
+                ? { width: start.width + dx, height: start.height + dy }
+                : { x: start.x + dx, y: start.y + dy }),
+            }),
+          );
+          position();
+        };
+        el.onpointerup = () => {
+          el.onpointermove = null;
+          S.selected = f.id;
+          dirty();
+          drawFields();
+          drawOverlays();
+        };
+      };
+      el.onkeydown = (e) => {
+        if (
+          ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)
+        ) {
+          e.preventDefault();
+          Object.assign(
+            f,
+            bounded({
+              ...f,
+              x:
+                f.x +
+                (e.key === "ArrowLeft"
+                  ? -0.002
+                  : e.key === "ArrowRight"
+                    ? 0.002
+                    : 0),
+              y:
+                f.y +
+                (e.key === "ArrowUp"
+                  ? -0.002
+                  : e.key === "ArrowDown"
+                    ? 0.002
+                    : 0),
+            }),
+          );
+          dirty();
+          position();
+        }
+        if (e.key === "Delete") {
+          S.fields = S.fields.filter((v) => v.id !== f.id);
+          dirty();
+          drawFields();
+          drawOverlays();
+        }
+      };
+    }
+    layer.append(el);
+  }
+}
+function drawFields() {
+  $("#zoneCount").textContent = S.fields.length;
+  $("#fieldList").innerHTML =
+    S.fields
+      .map((f) => {
+        const s = S.signers.find((s) => s.id === f.signer_id);
+        return `<button class="zone-item ${f.id === S.selected ? "selected" : ""}" data-field="${f.id}"><span>${esc(s?.name || "À attribuer")}<small>${esc(kinds[f.kind])} · page ${f.page}${f.confidence != null ? " · indice " + Math.round(f.confidence * 100) + " %" : ""}</small></span><span>${f.confirmed ? "✓" : "!"}</span></button>`;
+      })
+      .join("") ||
+    '<div class="empty small"><p>Lancez l’analyse du PDF ou placez une zone manuellement.</p></div>';
+  document.querySelectorAll("[data-field]").forEach(
+    (el) =>
+      (el.onclick = () => {
+        S.selected = el.dataset.field;
+        const f = S.fields.find((f) => f.id === S.selected);
+        goPage(f.page);
+        drawFields();
+      }),
+  );
+  const f = S.fields.find((f) => f.id === S.selected);
+  $("#fieldDetail").innerHTML =
+    f && editable()
+      ? `<div class="field-settings stack"><strong>Modifier cette zone</strong><p class="small muted">${esc(f.label || "Zone manuelle")}<br>${esc(f.detection_source || "")}</p><label>Signataire<select id="fieldSigner">${signerOptions(f.signer_id)}</select></label><label>Type<select id="fieldKind">${kindOptions(f.kind)}</select></label><label>Libellé<input id="fieldLabel" value="${esc(f.label)}" maxlength="160"></label><label class="check"><input type="checkbox" id="fieldRequired" ${f.required ? "checked" : ""}>Champ obligatoire</label><label class="check"><input id="fieldConfirmed" type="checkbox" ${f.confirmed ? "checked" : ""}>Position et attribution vérifiées</label><button class="btn danger" id="deleteField">Supprimer la zone</button></div>`
+      : "";
+  if (f && editable()) {
+    const change = () => {
+      f.signer_id = $("#fieldSigner").value || null;
+      f.kind = $("#fieldKind").value;
+      f.label = $("#fieldLabel").value;
+      f.required = $("#fieldRequired").checked;
+      f.confirmed = $("#fieldConfirmed").checked;
+      dirty();
+      drawOverlays();
+    };
+    [
+      "#fieldSigner",
+      "#fieldKind",
+      "#fieldLabel",
+      "#fieldRequired",
+      "#fieldConfirmed",
+    ].forEach(
+      (s) =>
+        ($(s).onchange = () => {
+          change();
+          drawFields();
+        }),
+    );
+    $("#deleteField").onclick = () => {
+      S.fields = S.fields.filter((v) => v.id !== f.id);
+      dirty();
+      drawFields();
+      drawOverlays();
+    };
+  }
+}
+async function runAnalysis() {
+  analysisController = new AbortController();
+  $("#stopAnalysis").hidden = false;
+  try {
+    const result = await analyzePdf(S.pdf, S.signers, {
+      ocrMode: $("#ocrMode").value,
+      signal: analysisController.signal,
+      onProgress: (message) => {
+        $("#analysisStatus").textContent = message;
+      },
+    });
+    let added = 0;
+    for (const c of result.candidates) {
+      if (S.fields.some((f) => f.page === c.page && overlap(f, c) > 0.5))
+        continue;
+      S.fields.push({
+        ...c,
+        id: uuid(),
+        document_id: S.doc.id,
+        signer_id: c.suggested_signer_id,
+        required: true,
+        confirmed: false,
+        detection_source: c.reason,
+      });
+      added++;
+    }
+    if (added) {
+      dirty();
+      S.selected = S.fields.find((f) => !f.confirmed)?.id;
+      goPage(S.fields.find((f) => f.id === S.selected)?.page || S.page);
+    }
+    drawFields();
+    drawOverlays();
+    $("#analysisStatus").textContent =
+      `${added} proposition(s) ajoutée(s) · ${result.pages} page(s) · ${result.ocrPages} page(s) OCR. ${result.warnings.join(" ")}`;
+    notify(
+      added
+        ? "Sélectionnez chaque proposition, attribuez-la et cochez « Position et attribution vérifiées »."
+        : "Aucune nouvelle zone trouvée. Vous pouvez placer les zones manuellement.",
+      added ? "success" : "warning",
+    );
+  } catch (e) {
+    if (e.name === "AbortError")
+      notify("Analyse arrêtée. Les zones déjà présentes sont conservées.");
+    else throw e;
+  } finally {
+    $("#stopAnalysis").hidden = true;
+    analysisController = null;
+  }
+}
+function validateDraft() {
+  if (!S.signers.length) throw new Error("Ajoutez au moins un signataire.");
+  if (!S.fields.length) throw new Error("Ajoutez les zones de signature.");
+  if (S.fields.some((f) => !f.signer_id || !f.confirmed))
+    throw new Error(
+      "Attribuez et vérifiez toutes les zones avant d’enregistrer.",
+    );
+  for (const s of S.signers)
+    if (
+      !S.fields.some(
+        (f) =>
+          f.signer_id === s.id && ["signature", "initials"].includes(f.kind),
+      )
+    )
+      throw new Error(`Ajoutez une signature ou un paraphe pour ${s.name}.`);
+}
 async function saveFields() {
-  if (!state.fields.length) { flash('error', 'Aucune zone de signature.'); return false }
-  const { error: delErr } = await supabase.from('signatureflow_signature_fields').delete().eq('document_id', state.currentDoc.id)
-  if (delErr) { flash('error', delErr.message); return false }
-  const rows = state.fields.map(({id,document_id,signer_id,page,x,y,width,height}) => ({id,document_id,signer_id,page,x,y,width,height}))
-  const { error } = await supabase.from('signatureflow_signature_fields').insert(rows)
-  if (error) { flash('error', error.message); return false }
-  state.fields = rows
-  flash('success', 'Zones de signature enregistrées.')
-  return true
+  validateDraft();
+  if (!S.demo) {
+    const fields = S.fields.map(
+      ({
+        id,
+        signer_id,
+        page,
+        x,
+        y,
+        width,
+        height,
+        kind,
+        label,
+        required,
+        confidence,
+        detection_source,
+      }) => ({
+        id,
+        signer_id,
+        page,
+        x,
+        y,
+        width,
+        height,
+        kind,
+        label,
+        required,
+        confidence,
+        detection_source,
+      }),
+    );
+    check(
+      await supabase.rpc("signatureflow_save_fields", {
+        p_document: S.doc.id,
+        p_fields: fields,
+      }),
+    );
+  }
+  S.dirty = false;
+  $("#savedState").textContent = S.demo
+    ? "Zones validées pour cet essai local"
+    : "Toutes les zones sont enregistrées";
+  notify(
+    S.demo
+      ? "Zones validées dans l’essai. Connectez-vous pour créer un dossier partagé."
+      : "Zones enregistrées. Vous pouvez créer les liens personnels.",
+    "success",
+  );
 }
-
-async function sendInvites() {
-  const saved = await saveFields()
-  if (!saved) return
-  const { data, error } = await supabase.functions.invoke('signatureflow-invite-signer', { body: { documentId: state.currentDoc.id, appUrl: APP_URL } })
-  if (error) return flash('error', error.message)
-  flash('success', `${data.sent || 0} invitation(s) envoyée(s).`)
+async function issueLinks(delivery) {
+  if (S.demo) return;
+  if (editable()) await saveFields();
+  else if (
+    !confirm(
+      "Renouveler les liens des signataires en attente ? Leurs anciens liens seront désactivés.",
+    )
+  )
+    return;
+  const result = await invoke("signatureflow-invite-signer", {
+    documentId: S.doc.id,
+    appUrl: APP_URL,
+    delivery,
+  });
+  const links = result.links;
+  await openDocument(S.doc.id);
+  S.links = links;
+  renderLinks();
+  notify(
+    delivery === "email"
+      ? `${result.sent}/${links.length} invitation(s) envoyée(s). Les liens restent disponibles ci-dessous.`
+      : "Les liens personnels sont prêts à partager. Le document est maintenant figé.",
+    "success",
+  );
 }
-
-async function downloadCurrent() {
-  const path = state.currentDoc.current_storage_path || state.currentDoc.storage_path
-  const { data, error } = await supabase.storage.from('signatureflow-documents').download(path)
-  if (error) return flash('error', error.message)
-  const url = URL.createObjectURL(data)
-  const a = document.createElement('a'); a.href = url; a.download = `${state.currentDoc.name.replace(/[^a-z0-9-_]+/gi,'_')}.pdf`; a.click(); URL.revokeObjectURL(url)
+function renderLinks() {
+  $("#linkList").innerHTML = S.links
+    .map(
+      (l, i) =>
+        `<div class="link-card stack"><strong>${esc(l.name)}</strong><small>${esc(l.email)}</small><span class="small ${l.error ? "error" : "muted"}">${esc(l.error || (l.sent ? "Invitation envoyée" : "Lien prêt"))} · expire le ${date(l.expires)}</span><div class="row"><button class="btn secondary" data-copy="${i}">Copier</button><button class="btn secondary" data-share="${i}">Partager</button><a class="btn secondary" href="${esc("mailto:" + l.email + "?subject=" + encodeURIComponent("Document à signer — " + S.doc.name) + "&body=" + encodeURIComponent(`Bonjour ${l.name},\nMerci de lire et signer « ${S.doc.name} » via votre lien personnel :\n${l.url}\nCe lien est valable 14 jours.`))}">E-mail</a></div></div>`,
+    )
+    .join("");
+  document.querySelectorAll("[data-copy]").forEach(
+    (el) =>
+      (el.onclick = () =>
+        busy(el, async () => {
+          await navigator.clipboard.writeText(S.links[el.dataset.copy].url);
+          notify(
+            "Lien copié. Vous pouvez le coller dans Journal de Chantier.",
+            "success",
+          );
+        })),
+  );
+  document.querySelectorAll("[data-share]").forEach(
+    (el) =>
+      (el.onclick = () =>
+        busy(el, async () => {
+          const l = S.links[el.dataset.share];
+          if (navigator.share)
+            await navigator.share({
+              title: S.doc.name,
+              text: `${l.name}, voici votre document à lire et signer.`,
+              url: l.url,
+            });
+          else {
+            await navigator.clipboard.writeText(l.url);
+            notify("Lien copié.");
+          }
+        })),
+  );
 }
-
-async function renderSigningPage(token) {
-  if (!configured) return renderSetupMissing()
-  app.innerHTML = layout(`<main class="sign-page"><div class="card">Chargement du document…</div></main>`)
-  const { data, error } = await supabase.functions.invoke('signatureflow-get-signing-context', { body: { token } })
-  if (error || !data) {
-    app.innerHTML = layout(`<main class="sign-page"><div class="card error">Lien invalide, expiré ou non disponible.</div></main>`)
-    return
-  }
-  if (data.blocked) {
-    app.innerHTML = layout(`<main class="sign-page"><div class="card warning"><h2>Signature en attente</h2><p>Un signataire précédent doit encore signer ce document. Tu peux conserver ce lien et réessayer plus tard.</p></div></main>`)
-    return
-  }
-  if (!data.document) {
-    app.innerHTML = layout(`<main class="sign-page"><div class="card error">Document indisponible.</div></main>`)
-    return
-  }
-  if (data.signer.status === 'signed') {
-    app.innerHTML = layout(`<main class="sign-page"><div class="card success"><h2>Document déjà signé</h2><p>La signature de ${esc(data.signer.name)} a déjà été enregistrée.</p></div></main>`)
-    return
-  }
-
-  const response = await fetch(data.document.signedUrl)
-  const pdfBytes = await response.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: pdfBytes }).promise
-
-  app.innerHTML = layout(`<main class="sign-page stack"><section class="card"><h2>${esc(data.document.name)}</h2><p>Signataire : <strong>${esc(data.signer.name)}</strong> — ${esc(data.signer.email)}</p><div class="notice">Vérifie le document et les emplacements indiqués avant de signer.</div></section><section class="card"><div id="signPdf" class="stack"></div></section><section class="card stack"><h3>Signature</h3><div class="field"><label>Nom et prénom</label><input id="typedName" value="${esc(data.signer.name)}"></div><div class="signature-box"><canvas id="signatureCanvas"></canvas></div><div class="row"><button class="btn secondary" id="clearSig">Effacer</button></div><label class="row" style="align-items:flex-start"><input id="consent" type="checkbox" style="width:auto;margin-top:3px"><span>Je confirme avoir pris connaissance du document et j’accepte d’y apposer cette signature électronique.</span></label><button class="btn blue" id="submitSig">Signer le document</button><div id="signMsg"></div></section></main>`)
-
-  const host = document.querySelector('#signPdf')
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p)
-    const viewport = page.getViewport({ scale: 1.15 })
-    const pageTitle = document.createElement('div'); pageTitle.className = 'small muted'; pageTitle.textContent = `Page ${p} / ${pdf.numPages}`; host.appendChild(pageTitle)
-    const wrap = document.createElement('div'); wrap.className = 'pdf-wrap'
-    const stage = document.createElement('div'); stage.className = 'pdf-stage'; stage.style.width = `${viewport.width}px`; stage.style.height = `${viewport.height}px`
-    const canvas = document.createElement('canvas'); canvas.width = viewport.width; canvas.height = viewport.height
-    stage.appendChild(canvas); wrap.appendChild(stage); host.appendChild(wrap)
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-    data.fields.filter(f => Number(f.page) === p).forEach(f => {
-      const o = document.createElement('div'); o.className = 'signature-overlay'; o.textContent = 'Votre signature'
-      o.style.left = `${f.x*viewport.width}px`; o.style.top = `${f.y*viewport.height}px`; o.style.width=`${f.width*viewport.width}px`; o.style.height=`${f.height*viewport.height}px`; stage.appendChild(o)
-    })
-  }
-
-  const sigCanvas = document.querySelector('#signatureCanvas')
-  const ratio = Math.max(window.devicePixelRatio || 1, 1)
-  sigCanvas.width = sigCanvas.offsetWidth * ratio; sigCanvas.height = 220 * ratio; sigCanvas.getContext('2d').scale(ratio, ratio)
-  const pad = new SignaturePad(sigCanvas, { minWidth: 0.7, maxWidth: 2.2 })
-  document.querySelector('#clearSig').onclick = () => pad.clear()
-  document.querySelector('#submitSig').onclick = async () => {
-    const msg = document.querySelector('#signMsg')
-    if (pad.isEmpty()) { msg.innerHTML = '<div class="error">La signature est vide.</div>'; return }
-    if (!document.querySelector('#consent').checked) { msg.innerHTML = '<div class="error">Le consentement est obligatoire.</div>'; return }
-    const typedName = document.querySelector('#typedName').value.trim()
-    if (!typedName) { msg.innerHTML = '<div class="error">Nom et prénom obligatoires.</div>'; return }
-    const button = document.querySelector('#submitSig'); button.disabled = true; button.textContent = 'Enregistrement…'
-    const payload = { token, typedName, accepted: true, signatureDataUrl: pad.toDataURL('image/png') }
-    const { data: result, error: submitError } = await supabase.functions.invoke('signatureflow-submit-signature', { body: payload })
-    if (submitError || !result?.ok) { button.disabled = false; button.textContent = 'Signer le document'; msg.innerHTML = `<div class="error">${esc(submitError?.message || result?.error || 'Erreur')}</div>`; return }
-    sessionStorage.removeItem('signatureflow_sign_token')
-    app.innerHTML = layout(`<main class="sign-page"><div class="card success"><h2>Signature enregistrée</h2><p>Merci. Le document a été signé et la piste d’audit a été mise à jour.</p><p class="small">Empreinte du PDF signé : <span class="kbd">${esc(result.sha256 || '')}</span></p></div></main>`)
-  }
+function exitSigning() {
+  sessionStorage.removeItem("signatureflow_sign_token");
+  history.replaceState({}, "", location.pathname);
+  location.reload();
 }
-
-boot().catch(err => { console.error(err); app.innerHTML = `<main class="container"><div class="error">${esc(err.message)}</div></main>` })
+async function signingPage(token) {
+  if (!supabase) {
+    login();
+    return notify("Le service de signature doit être configuré.", "warning");
+  }
+  shell(
+    '<main class="sign-page"><div class="card">Chargement de votre document…</div></main>',
+  );
+  let data;
+  try {
+    data = await invoke("signatureflow-get-signing-context", { token });
+  } catch (e) {
+    shell(
+      `<main class="sign-page"><div class="card stack"><h1>Lien indisponible</h1><p>${esc(e.message)}</p><p>Demandez un nouveau lien à l’organisateur du document.</p><button class="btn secondary" id="exitSigning">Quitter</button></div></main>`,
+    );
+    $("#exitSigning").onclick = exitSigning;
+    return;
+  }
+  const already = data.signer.status === "signed";
+  shell(
+    `<main class="sign-page stack"><section class="card sign-intro"><div><span class="eyebrow">${already ? "SIGNATURE ENREGISTRÉE" : "VOTRE DOCUMENT À SIGNER"}</span><h1>${esc(data.document.name)}</h1><p>Bonjour <strong>${esc(data.signer.name)}</strong>. ${already ? "Votre signature a bien été enregistrée." : "Prenez connaissance du document avant de signer."}</p></div><button class="btn secondary" id="exitSigning">Quitter</button></section>${data.blocked ? '<div class="warning">Un signataire précédent doit encore signer. Vous pouvez lire le document et revenir avec ce même lien.<button class="btn secondary" id="retry">Actualiser</button></div>' : ""}<section class="card stack"><div class="row between"><div class="row"><button class="btn secondary" id="signPrev">←</button><strong id="signPageLabel"></strong><button class="btn secondary" id="signNext">→</button></div><a class="btn secondary" href="${esc(data.document.signedUrl)}" target="_blank" rel="noopener noreferrer">Ouvrir le PDF ↗</a></div><div id="signPdfHost" class="pdf-host"></div><button class="btn secondary" id="nextZone">Aller à ma prochaine zone ↓</button></section>${
+      !already && !data.blocked
+        ? `<section class="card stack" id="signForm"><span class="eyebrow">À VOUS DE SIGNER</span><h2>Votre signature</h2><label>Nom et prénom<input id="typedName" value="${esc(data.signer.name)}" required maxlength="160" autocomplete="name"></label>${data.fields
+            .filter((f) => ["text", "checkbox"].includes(f.kind))
+            .map((f) =>
+              f.kind === "checkbox"
+                ? `<label class="check"><input data-value="${f.id}" type="checkbox" ${f.required ? "required" : ""}>${esc(f.label || "Case à cocher")} ${f.required ? "*" : ""} · page ${f.page}</label>`
+                : `<label>${esc(f.label || "Texte à compléter")} ${f.required ? "*" : ""} · page ${f.page}<input data-value="${f.id}" maxlength="500" ${f.required ? "required" : ""}></label>`,
+            )
+            .join(
+              "",
+            )}<label>Tracez votre signature<div class="signature-box"><canvas id="signatureCanvas" aria-label="Zone de dessin de la signature"></canvas></div></label><button class="btn secondary fit" id="clearSignature">Effacer la signature</button>${data.fields.some((f) => f.kind === "initials") ? '<label>Tracez vos initiales<div class="signature-box"><canvas id="initialsCanvas" aria-label="Zone de dessin des initiales"></canvas></div></label><button class="btn secondary fit" id="clearInitials">Effacer les initiales</button>' : ""}<label class="check consent"><input id="consent" type="checkbox"><span>Je confirme avoir pris connaissance du document « ${esc(data.document.name)} » et j’accepte d’y apposer cette signature électronique dans les zones qui me sont attribuées.</span></label><button class="btn primary" id="submitSignature">Confirmer et signer le document →</button><p class="small muted">Cette signature utilise le lien personnel envoyé à ${esc(data.signer.email)} et votre consentement. Elle ne comporte pas de vérification de pièce d’identité.</p></section>`
+        : already
+          ? '<div class="success">Votre signature est enregistrée. Le PDF accessible ci-dessus contient la dernière version disponible.</div>'
+          : ""
+    }</main>`,
+  );
+  $("#exitSigning").onclick = exitSigning;
+  $("#retry")?.addEventListener("click", () => signingPage(token));
+  const response = await fetch(data.document.signedUrl);
+  if (!response.ok) throw new Error("Accès au PDF expiré. Rechargez la page.");
+  const bytes = await response.arrayBuffer(),
+    actual = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+      (v) => v.toString(16).padStart(2, "0"),
+    ).join("");
+  if (actual !== data.document.sha256)
+    throw new Error(
+      "L’empreinte du PDF ne correspond pas. Rechargez le document.",
+    );
+  const pdf = await pdfjs.getDocument({ ...pdfOptions, data: bytes }).promise;
+  let pageNum = 1,
+    zoneIndex = -1,
+    signRender = 0;
+  const draw = async () => {
+    const seq = ++signRender,
+      page = await pdf.getPage(pageNum),
+      host = $("#signPdfHost");
+    if (seq !== signRender || !host) return;
+    const vp = page.getViewport({
+        scale:
+          Math.max(220, host.clientWidth - 32) /
+          page.getViewport({ scale: 1 }).width,
+      }),
+      stage = document.createElement("div"),
+      canvas = document.createElement("canvas"),
+      dpr = Math.min(devicePixelRatio || 1, 2);
+    stage.className = "pdf-stage";
+    stage.style.width = vp.width + "px";
+    stage.style.height = vp.height + "px";
+    canvas.width = vp.width * dpr;
+    canvas.height = vp.height * dpr;
+    canvas.style.width = vp.width + "px";
+    canvas.style.height = vp.height + "px";
+    stage.append(canvas);
+    host.replaceChildren(stage);
+    await page.render({
+      canvasContext: canvas.getContext("2d"),
+      viewport: vp,
+      transform: [dpr, 0, 0, dpr, 0, 0],
+    }).promise;
+    if (seq !== signRender) return;
+    data.fields
+      .filter((f) => f.page === pageNum)
+      .forEach((f) => {
+        const o = document.createElement("button");
+        o.className = "signature-overlay";
+        Object.assign(o.style, {
+          left: f.x * 100 + "%",
+          top: f.y * 100 + "%",
+          width: f.width * 100 + "%",
+          height: f.height * 100 + "%",
+        });
+        o.textContent = kinds[f.kind];
+        o.onclick = () =>
+          $("#signForm")?.scrollIntoView({ behavior: "smooth" });
+        stage.append(o);
+      });
+    $("#signPageLabel").textContent = `Page ${pageNum} / ${pdf.numPages}`;
+    $("#signPrev").disabled = pageNum === 1;
+    $("#signNext").disabled = pageNum === pdf.numPages;
+  };
+  $("#signPrev").onclick = () => {
+    if (pageNum > 1) {
+      pageNum--;
+      draw();
+    }
+  };
+  $("#signNext").onclick = () => {
+    if (pageNum < pdf.numPages) {
+      pageNum++;
+      draw();
+    }
+  };
+  $("#nextZone").onclick = () => {
+    if (!data.fields.length) return;
+    zoneIndex = (zoneIndex + 1) % data.fields.length;
+    pageNum = data.fields[zoneIndex].page;
+    draw();
+    $("#signPdfHost").scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  await draw();
+  const observed = new ResizeObserver(() => {
+    clearTimeout(S.signResize);
+    S.signResize = setTimeout(draw, 180);
+  });
+  observed.observe($("#signPdfHost"));
+  resizeObserver = observed;
+  if (already || data.blocked) return;
+  const makePad = (id) => {
+    const c = $(id),
+      pad = new SignaturePad(c, { minWidth: 0.7, maxWidth: 2.2 });
+    let previousWidth = 0;
+    const resize = () => {
+      const strokes = pad.toData(),
+        width = c.clientWidth;
+      if (!width || c.width === Math.round(width * devicePixelRatio)) return;
+      c.width = Math.round(width * devicePixelRatio);
+      c.height = Math.round(180 * devicePixelRatio);
+      c.getContext("2d").scale(devicePixelRatio, devicePixelRatio);
+      pad.clear();
+      if (strokes.length) {
+        const scale = previousWidth ? width / previousWidth : 1;
+        const adjusted = strokes.map((group) => ({
+          ...group,
+          points: group.points.map((point) => ({
+            ...point,
+            x: point.x * scale,
+          })),
+        }));
+        pad.fromData(adjusted);
+      }
+      previousWidth = width;
+    };
+    resize();
+    observed.observe(c);
+    const handler = new ResizeObserver(resize);
+    handler.observe(c);
+    pad._observer = handler;
+    pads.push(pad);
+    return pad;
+  };
+  const pad = makePad("#signatureCanvas"),
+    initialPad = $("#initialsCanvas") ? makePad("#initialsCanvas") : null;
+  $("#clearSignature").onclick = () => pad.clear();
+  $("#clearInitials")?.addEventListener("click", () => initialPad.clear());
+  const requestId = uuid();
+  $("#submitSignature").onclick = (e) =>
+    busy(e.target, async () => {
+      if (pad.isEmpty() || (initialPad && initialPad.isEmpty()))
+        throw new Error(
+          "Tracez votre signature et vos initiales si demandées.",
+        );
+      if (!$("#consent").checked)
+        throw new Error(
+          "Confirmez votre lecture et votre consentement avant de signer.",
+        );
+      const inputs = [...document.querySelectorAll("#signForm input")];
+      if (inputs.some((i) => !i.checkValidity())) {
+        inputs.find((i) => !i.checkValidity()).reportValidity();
+        return;
+      }
+      const typedName = $("#typedName").value.trim();
+      if (typedName.length < 2)
+        throw new Error("Renseignez votre nom et prénom.");
+      const values = Object.fromEntries(
+        [...document.querySelectorAll("[data-value]")].map((el) => [
+          el.dataset.value,
+          el.type === "checkbox" ? el.checked : el.value.trim(),
+        ]),
+      );
+      const result = await invoke("signatureflow-submit-signature", {
+        token,
+        requestId,
+        expectedSha256: data.document.sha256,
+        typedName,
+        accepted: true,
+        signatureDataUrl: pad.toDataURL("image/png"),
+        initialsDataUrl: initialPad?.toDataURL("image/png"),
+        values,
+      });
+      shell(
+        `<main class="sign-page"><section class="card signed-result stack"><span class="result-check">✓</span><span class="eyebrow">C’EST SIGNÉ</span><h1>Merci, ${esc(data.signer.name)}.</h1><p>Votre signature a été enregistrée sur « ${esc(data.document.name)} ».</p>${result.downloadUrl ? `<a class="btn primary" href="${esc(result.downloadUrl)}" target="_blank" rel="noopener noreferrer">Télécharger le PDF signé ↓</a>` : ""}<button class="btn secondary" id="showSigned">Voir la dernière version</button><details><summary>Empreinte du document</summary><p class="hash">${esc(result.sha256)}</p></details><button class="btn secondary" id="exitSigning">Fermer</button></section></main>`,
+      );
+      $("#exitSigning").onclick = exitSigning;
+      $("#showSigned").onclick = () => signingPage(token);
+      await pdf.destroy();
+    });
+}
+boot().catch((e) => notify(e.message, "error"));

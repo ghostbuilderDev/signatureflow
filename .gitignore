@@ -4,3 +4,9 @@ dist/
 .env.*
 !.env.example
 .DS_Store
+
+public/ocr/
+public/pdf-fonts/
+playwright-report/
+test-results/
+.env.production

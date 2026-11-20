@@ -1,16 +1,26 @@
-SIGNATUREFLOW V1.1 — COMMANDES TERMUX
+SIGNATUREFLOW 2.0 — MISE À JOUR DU DÉPÔT EXISTANT
 
-1) termux-setup-storage
+Télécharger SIGNATUREFLOW-V2.0-TERMUX.zip dans Téléchargements, puis coller :
 
-2) cd ~/storage/downloads/signatureflow
+termux-setup-storage
+pkg install -y unzip
+SF_STAGE="$(mktemp -d "$HOME/signatureflow-v2.XXXXXX")"
+unzip -q "$HOME/storage/downloads/SIGNATUREFLOW-V2.0-TERMUX.zip" -d "$SF_STAGE"
+bash "$SF_STAGE/signatureflow-main/update-termux.sh"
 
-3) chmod +x setup-termux.sh configure-and-deploy.sh
+Par défaut : dépôt GitHub signatureflow, dossier ~/signatureflow.
+Pour un autre emplacement :
+SIGNATUREFLOW_REPO_DIR="$HOME/mon-dossier" bash "$SF_STAGE/signatureflow-main/update-termux.sh" Proprietaire/Depot
 
-4) ./setup-termux.sh signatureflow public
+Si les secrets ne sont pas encore renseignés :
+cd ~/signatureflow
+bash configure-and-deploy.sh
 
-5) ./configure-and-deploy.sh
+Suivi :
+gh run list --workflow supabase.yml
+gh run list --workflow pages.yml
 
-6) Suivi :
-gh run list
-
-7) Ajouter l’URL GitHub Pages affichée dans Supabase > Authentication > URL Configuration > Redirect URLs.
+L’application est reconstruite et publiée après le succès du backend.
+Aucun destinataire n’est contacté par ces commandes.
+Le service e-mail Resend est facultatif : les liens peuvent être copiés et envoyés par JDC ou votre messagerie.
+Lire README.md pour le premier déploiement et les limites de l’analyse.

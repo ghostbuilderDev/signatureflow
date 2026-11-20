@@ -3,30 +3,49 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: write
+concurrency:
+  group: signatureflow-backend
+  cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
+      - uses: actions/setup-node@v4
         with:
-          version: latest
-      - name: Link project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      - name: Apply database migration
-        run: supabase db push --password "$SUPABASE_DB_PASSWORD"
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      - name: Deploy Edge Functions
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:functions
+      - name: Check Edge Functions
+        run: npx deno check supabase/functions/signatureflow-invite-signer/index.ts supabase/functions/signatureflow-get-signing-context/index.ts supabase/functions/signatureflow-submit-signature/index.ts
+      - name: Prepare isolated migration workspace
         run: |
-          supabase functions deploy signatureflow-invite-signer --no-verify-jwt --project-ref "$SUPABASE_PROJECT_REF"
-          supabase functions deploy signatureflow-get-signing-context --no-verify-jwt --project-ref "$SUPABASE_PROJECT_REF"
-          supabase functions deploy signatureflow-submit-signature --no-verify-jwt --project-ref "$SUPABASE_PROJECT_REF"
+          mkdir -p "$RUNNER_TEMP/signatureflow-db/supabase/migrations"
+          cp supabase/config.toml "$RUNNER_TEMP/signatureflow-db/supabase/config.toml"
+          npx supabase link --workdir "$RUNNER_TEMP/signatureflow-db" --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+          npx supabase migration fetch --linked --workdir "$RUNNER_TEMP/signatureflow-db" --yes
+          node scripts/stage-migrations.mjs "$RUNNER_TEMP/signatureflow-db/supabase/migrations"
+      - name: Set dedicated SignatureFlow URL
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SIGNATUREFLOW_PUBLIC_URL: ${{ secrets.VITE_APP_URL }}
+        run: |
+          test -n "$SIGNATUREFLOW_PUBLIC_URL"
+          npx supabase secrets set "SIGNATUREFLOW_APP_URL=$SIGNATUREFLOW_PUBLIC_URL" --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Apply additive migrations
+        run: npx supabase db push --linked --include-all --skip-vault --workdir "$RUNNER_TEMP/signatureflow-db" --password "$SUPABASE_DB_PASSWORD" --yes
+      - name: Deploy SignatureFlow functions
+        run: |
+          npx supabase functions deploy signatureflow-invite-signer --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
+          npx supabase functions deploy signatureflow-get-signing-context --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
+          npx supabase functions deploy signatureflow-submit-signature --no-verify-jwt --use-api --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy frontend after backend success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main

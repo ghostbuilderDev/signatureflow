@@ -1,24 +1,35 @@
-import { defineConfig } from 'vite'
-import { VitePWA } from 'vite-plugin-pwa'
-
+import { defineConfig } from "vite";
+import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig({
-  base: './',
+  base: "./",
   plugins: [
     VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['icon.svg'],
+      registerType: "prompt",
+      includeAssets: ["icon.svg"],
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,svg,webmanifest}"],
+        globIgnores: ["ocr/**", "pdf-fonts/**"],
+        maximumFileSizeToCacheInBytes: 6000000,
+        navigateFallbackDenylist: [/^\/auth\//],
+        runtimeCaching: [],
+      },
       manifest: {
-        name: 'SignatureFlow',
-        short_name: 'SignatureFlow',
-        description: 'Préparer, envoyer et signer des documents PDF avec piste d’audit.',
-        theme_color: '#111827',
-        background_color: '#f4f7fb',
-        display: 'standalone',
-        start_url: './',
+        name: "SignatureFlow",
+        short_name: "SignatureFlow",
+        description: "Lire, préparer et signer vos PDF en quelques gestes.",
+        theme_color: "#345ce6",
+        background_color: "#f3f5f9",
+        display: "standalone",
+        start_url: "./",
         icons: [
-          { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }
-        ]
-      }
-    })
-  ]
-})
+          {
+            src: "icon.svg",
+            sizes: "any",
+            type: "image/svg+xml",
+            purpose: "any maskable",
+          },
+        ],
+      },
+    }),
+  ],
+});
