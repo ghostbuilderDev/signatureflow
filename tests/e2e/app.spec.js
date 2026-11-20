@@ -69,6 +69,7 @@ test("desktop imports PDF, detects separate signature blocks, requires review, m
   await page.getByRole("button", { name: "Enregistrer les zones" }).click();
   await expect(page.locator("#savedState")).toContainText("validées");
   await page.locator("[data-field]").first().click();
+  await page.locator(".sig-field.active").scrollIntoViewIfNeeded();
   const field = page.locator(".sig-field.active"),
     box = await field.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
