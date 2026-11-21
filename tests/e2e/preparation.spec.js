@@ -146,6 +146,7 @@ test("mobile changes an existing date zone to signature and creates the link", a
   await page.locator("[data-field]").click();
   await page.locator("#fieldKind").selectOption("signature");
   await expect(page.locator(".sig-field")).toContainText("Signature");
+  await page.locator("#fieldConfirmed").check();
   await page.locator("#confirmPreparation").check();
   await page.locator("#shareLinks").click();
   await expect(page.locator(".link-card")).toContainText("Lien prêt");
@@ -185,6 +186,7 @@ test("server failure remains visible beside the create-links button and allows a
   await openDraft(page, { failIssue: true });
   await page.locator("[data-field]").click();
   await page.locator("#fieldKind").selectOption("signature");
+  await page.locator("#fieldConfirmed").check();
   await page.locator("#confirmPreparation").check();
   await page.locator("#shareLinks").click();
   await expect(page.locator("#preparationFeedback")).toContainText(

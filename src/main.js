@@ -70,6 +70,7 @@ const S = {
   bytes: null,
   page: 1,
   selected: null,
+  deletedField: null,
   dirty: false,
   demo: false,
   links: [],
@@ -86,7 +87,9 @@ const check = (r) => {
   return r.data;
 };
 const date = (v) => (v ? new Date(v).toLocaleString("fr-FR") : "—");
+let noticeTimer;
 function notify(text, type = "notice") {
+  clearTimeout(noticeTimer);
   let n = $("#notice");
   if (!n) {
     n = document.createElement("div");
@@ -96,6 +99,7 @@ function notify(text, type = "notice") {
   }
   n.className = type;
   n.textContent = text;
+  if (type !== "error") noticeTimer = setTimeout(() => n.remove(), 6000);
 }
 function shell(content, right = "") {
   resizeObserver?.disconnect();
@@ -451,6 +455,8 @@ async function createDocument(file) {
   S.audit = [];
   S.page = 1;
   S.selected = null;
+  S.placing = null;
+  S.deletedField = null;
   S.links = [];
   S.dirty = false;
   editor();
@@ -502,6 +508,8 @@ async function openDocument(id) {
   S.contacts = check(result[3]);
   S.page = 1;
   S.selected = null;
+  S.placing = null;
+  S.deletedField = null;
   S.links = [];
   S.dirty = false;
   editor();
@@ -537,7 +545,7 @@ function editor() {
         .join(""),
     completionRecipients = (S.doc.completion_recipients || []).join(", ");
   shell(
-    `<main class="editor-shell"><div class="editor-heading"><button class="btn secondary" id="back">← Documents</button><div><h1>${esc(S.doc.name)}</h1><p class="small muted">${esc(S.doc.source_ref || "")} <span class="pill ${S.doc.status}">${statusNames[S.doc.status]}</span></p></div><div class="row"><button class="btn secondary" id="download">↓ PDF</button>${!S.demo ? '<button class="btn secondary" id="refresh">Actualiser</button>' : ""}</div></div><div class="editor-grid"><aside class="card preparation stack"><span class="eyebrow">01 · LES DESTINATAIRES</span><h2>Qui doit signer ?</h2><div id="signerList" class="stack"></div>${edit ? `<form id="signerForm" class="stack"><label>Contact enregistré<select id="savedContact">${contactOptions}</select></label><label>Nom et prénom<input id="signerName" required maxlength="160"></label><label>E-mail<input id="signerEmail" required type="email" maxlength="254"></label><label>Fonction dans le document<input id="signerRole" placeholder="Ex. Responsable travaux" maxlength="100"></label><label class="check"><input id="saveContact" type="checkbox" checked>Enregistrer ou actualiser ce contact</label><button class="btn secondary">+ Ajouter ce signataire</button></form><details class="contact-book"><summary>Carnet de contacts · ${S.contacts.length}</summary><div class="stack">${S.contacts.map((contact) => `<div class="contact-row"><span><strong>${esc(contact.name)}</strong><small>${esc(contact.role || contact.email)}</small></span><button class="remove-contact" data-contact="${contact.id}" aria-label="Supprimer ${esc(contact.name)}">×</button></div>`).join("") || '<p class="small muted">Aucun contact enregistré.</p>'}</div></details><hr><label>Ordre de signature<select id="signingMode"><option value="parallel" ${S.doc.signing_mode === "parallel" ? "selected" : ""}>Chacun peut signer dès réception</option><option value="sequential" ${S.doc.signing_mode === "sequential" ? "selected" : ""}>Dans l’ordre des signataires</option></select></label><label>Type de circuit<select id="workflowType"><option value="approval" ${S.doc.workflow_type !== "acknowledgement" ? "selected" : ""}>Validation complète</option><option value="acknowledgement" ${S.doc.workflow_type === "acknowledgement" ? "selected" : ""}>Prise de connaissance</option></select></label><label>Envoi automatique<select id="completionMode"><option value="all_after_complete" ${S.doc.completion_mode === "all_after_complete" ? "selected" : ""}>PDF final après toutes les signatures</option><option value="signer_after_each" ${S.doc.completion_mode === "signer_after_each" ? "selected" : ""}>Copie après chaque prise de connaissance</option><option value="manual" ${S.doc.completion_mode === "manual" ? "selected" : ""}>Envoi manuel uniquement</option></select></label><label>Copies finales supplémentaires<textarea id="completionRecipients" rows="2" maxlength="4000">${esc(completionRecipients)}</textarea></label><label class="check"><input id="requireFullRead" type="checkbox" ${S.doc.require_full_read !== false ? "checked" : ""}>Obliger la consultation de toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" ${S.doc.identity_stamp !== false ? "checked" : ""}>Inscrire nom et fonction avec la signature</label>` : '<p class="notice small">Le document est figé depuis la création des liens.</p>'}<hr><span class="eyebrow">03 · VALIDATION ET PARTAGE</span>${edit ? `<label class="check review-confirm"><input id="confirmPreparation" type="checkbox" ${S.doc.prepared_at ? "checked" : ""}>J’ai contrôlé l’intégralité du PDF, les noms, fonctions et emplacements</label>` : ""}<button id="shareLinks" class="btn primary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>${S.doc.status === "draft" ? "Valider et créer les liens" : "Renouveler les liens"}</button><button id="emailLinks" class="btn secondary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>Valider et envoyer les invitations</button><div id="preparationFeedback" class="stack" role="status" aria-live="polite" hidden></div><div id="linkList" class="stack"></div>${S.demo ? '<p class="small muted">Connectez-vous pour enregistrer un dossier et faire signer votre document.</p>' : ""}${!S.demo && S.doc.status === "in_progress" ? '<button class="btn danger" id="cancelEnvelope">Annuler les liens de ce dossier</button>' : ""}</aside><section class="pdf-column"><div class="card toolbar"><div class="row"><button class="btn secondary icon" id="prev" aria-label="Page précédente">←</button><label class="page-control">Page <input id="pageInput" type="number" min="1" max="${S.pdf.numPages}" value="${S.page}"> / ${S.pdf.numPages}</label><button class="btn secondary icon" id="next" aria-label="Page suivante">→</button></div>${edit ? `<div class="row"><select id="ocrMode" aria-label="Mode OCR"><option value="auto">OCR si PDF scanné</option><option value="always">OCR sur toutes les pages</option><option value="never">Sans OCR</option></select><button class="btn primary" id="analyze">Analyser le PDF</button><button class="btn secondary" id="stopAnalysis" hidden>Arrêter</button></div>` : ""}</div><div id="analysisStatus" class="small muted" aria-live="polite"></div><div id="selectedZoneTools" class="card manual-tools stack" hidden></div><div class="pdf-host" id="pdfHost"></div>${edit ? `<div class="card manual-tools"><span class="eyebrow">AJOUTER UNE NOUVELLE ZONE</span><div class="row"><select id="manualSigner" aria-label="Signataire de la zone">${signerOptions()}</select><select id="manualKind" aria-label="Type de zone">${kindOptions()}</select><button class="btn secondary" id="place">+ Placer sur la page</button></div><p class="small muted">Ces choix concernent la prochaine zone à ajouter. Pour modifier une zone déjà placée, touchez son cadre sur le PDF puis utilisez « Modifier la zone sélectionnée ».</p></div>` : ""}</section><aside class="card review stack"><span class="eyebrow">02 · LES EMPLACEMENTS</span><div class="row between"><h2>Zones du document</h2><span id="zoneCount" class="pill"></span></div><div id="fieldList" class="stack"></div><div id="fieldDetail"></div>${edit ? '<button class="btn primary" id="save">Enregistrer les zones</button><div class="small muted" id="savedState">Zones enregistrées</div>' : ""}<hr><h3>Suivi du dossier</h3><div class="audit-list">${
+    `<main class="editor-shell"><div class="editor-heading"><button class="btn secondary" id="back">← Documents</button><div><h1>${esc(S.doc.name)}</h1><p class="small muted">${esc(S.doc.source_ref || "")} <span class="pill ${S.doc.status}">${statusNames[S.doc.status]}</span></p></div><div class="row"><button class="btn secondary" id="download">↓ PDF</button>${!S.demo ? '<button class="btn secondary" id="refresh">Actualiser</button>' : ""}</div></div><div class="editor-grid"><aside class="card preparation stack"><span class="eyebrow">01 · LES DESTINATAIRES</span><h2>Qui doit signer ?</h2><p id="signerSummary" class="small muted" role="status"></p><div id="signerList" class="stack"></div>${edit ? `<form id="signerForm" class="stack"><label>Choisir un contact à ajouter<select id="savedContact" aria-describedby="signerFormHint">${contactOptions}</select></label><p id="signerFormHint" class="small muted" role="status">Choisir un contact remplit le formulaire. Cliquez ensuite sur « + Ajouter ce signataire » pour l’ajouter à ce document.</p><label>Nom et prénom<input id="signerName" required maxlength="160"></label><label>E-mail<input id="signerEmail" required type="email" maxlength="254"></label><label>Fonction dans le document<input id="signerRole" placeholder="Ex. Responsable travaux" maxlength="100"></label><label class="check"><input id="saveContact" type="checkbox" checked>Enregistrer ou actualiser ce contact</label><button class="btn secondary">+ Ajouter ce signataire</button><button type="button" class="btn secondary" id="clearSignerForm">Vider le formulaire</button></form><p id="signerFormFeedback" class="notice error" role="alert" hidden></p><details class="contact-book"><summary>Carnet de contacts · ${S.contacts.length}</summary><div class="stack">${S.contacts.map((contact) => `<div class="contact-row"><span><strong>${esc(contact.name)}</strong><small>${esc(contact.role || contact.email)}</small></span><button class="remove-contact" data-contact="${contact.id}" aria-label="Supprimer ${esc(contact.name)}">×</button></div>`).join("") || '<p class="small muted">Aucun contact enregistré.</p>'}</div></details><hr><label>Ordre de signature<select id="signingMode"><option value="parallel" ${S.doc.signing_mode === "parallel" ? "selected" : ""}>Chacun peut signer dès réception</option><option value="sequential" ${S.doc.signing_mode === "sequential" ? "selected" : ""}>Dans l’ordre des signataires</option></select></label><label>Type de circuit<select id="workflowType"><option value="approval" ${S.doc.workflow_type !== "acknowledgement" ? "selected" : ""}>Validation complète</option><option value="acknowledgement" ${S.doc.workflow_type === "acknowledgement" ? "selected" : ""}>Prise de connaissance</option></select></label><label>Envoi automatique<select id="completionMode"><option value="all_after_complete" ${S.doc.completion_mode === "all_after_complete" ? "selected" : ""}>PDF final après toutes les signatures</option><option value="signer_after_each" ${S.doc.completion_mode === "signer_after_each" ? "selected" : ""}>Copie après chaque prise de connaissance</option><option value="manual" ${S.doc.completion_mode === "manual" ? "selected" : ""}>Envoi manuel uniquement</option></select></label><label>Copies finales supplémentaires<textarea id="completionRecipients" rows="2" maxlength="4000">${esc(completionRecipients)}</textarea></label><label class="check"><input id="requireFullRead" type="checkbox" ${S.doc.require_full_read !== false ? "checked" : ""}>Obliger la consultation de toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" ${S.doc.identity_stamp !== false ? "checked" : ""}>Inscrire nom et fonction avec la signature</label>` : '<p class="notice small">Le document est figé depuis la création des liens.</p>'}<hr><span class="eyebrow">03 · VALIDATION ET PARTAGE</span>${edit ? `<label class="check review-confirm"><input id="confirmPreparation" type="checkbox" ${S.doc.prepared_at ? "checked" : ""}>J’ai contrôlé l’intégralité du PDF, les noms, fonctions et emplacements</label>` : ""}<button id="shareLinks" class="btn primary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>${S.doc.status === "draft" ? "Valider et créer les liens" : "Renouveler les liens"}</button><button id="emailLinks" class="btn secondary" ${S.demo || ["signed", "cancelled"].includes(S.doc.status) ? "disabled" : ""}>Valider et envoyer les invitations</button><div id="preparationFeedback" class="stack" role="status" aria-live="polite" hidden></div><div id="linkList" class="stack"></div>${S.demo ? '<p class="small muted">Connectez-vous pour enregistrer un dossier et faire signer votre document.</p>' : ""}${!S.demo && S.doc.status === "in_progress" ? '<button class="btn danger" id="cancelEnvelope">Annuler les liens de ce dossier</button>' : ""}</aside><section class="pdf-column"><div class="card toolbar"><div class="row"><button class="btn secondary icon" id="prev" aria-label="Page précédente">←</button><label class="page-control">Page <input id="pageInput" type="number" min="1" max="${S.pdf.numPages}" value="${S.page}"> / ${S.pdf.numPages}</label><button class="btn secondary icon" id="next" aria-label="Page suivante">→</button></div>${edit ? `<div class="row"><select id="ocrMode" aria-label="Mode OCR"><option value="auto">OCR si PDF scanné</option><option value="always">OCR sur toutes les pages</option><option value="never">Sans OCR</option></select><button class="btn primary" id="analyze">Analyser le PDF</button><button class="btn secondary" id="stopAnalysis" hidden>Arrêter</button></div>` : ""}</div><div id="analysisStatus" class="small muted" aria-live="polite"></div><p id="zoneSummary" class="small muted" role="status"></p><div id="zoneActionFeedback" class="stack notice" role="status" hidden></div><div id="selectedZoneTools" class="card manual-tools stack" hidden></div><div class="pdf-host" id="pdfHost"></div>${edit ? `<div class="card manual-tools"><span class="eyebrow">AJOUTER UNE NOUVELLE ZONE</span><div class="row"><select id="manualSigner" aria-label="Signataire de la zone">${signerOptions()}</select><select id="manualKind" aria-label="Type de zone">${kindOptions()}</select><button class="btn secondary" id="place">+ Placer sur la page</button></div><p class="small muted">Ces choix concernent la prochaine zone à ajouter. Pour modifier une zone déjà placée, touchez son cadre sur le PDF puis utilisez « Modifier la zone sélectionnée ».</p></div>` : ""}</section><aside class="card review stack"><span class="eyebrow">02 · LES EMPLACEMENTS</span><div class="row between"><h2>Zones du document</h2><span id="zoneCount" class="pill"></span></div><div id="fieldList" class="stack"></div><div id="fieldDetail"></div>${edit ? '<button class="btn primary" id="save">Enregistrer les zones</button><div class="small muted" id="savedState">Zones enregistrées</div>' : ""}<hr><h3>Suivi du dossier</h3><div class="audit-list">${
       S.audit
         .slice(0, 20)
         .map(
@@ -611,10 +619,29 @@ function editor() {
       $("#signerName").value = contact.name;
       $("#signerEmail").value = contact.email;
       $("#signerRole").value = contact.role || "";
+      $("#signerFormHint").textContent =
+        `${contact.name} est prérempli. Cliquez sur « + Ajouter ce signataire » pour l’ajouter au document.`;
     };
     $("#signerForm").onsubmit = (e) => {
       e.preventDefault();
-      busy(e.submitter, addSigner);
+      busy(e.submitter, async () => {
+        try {
+          await addSigner();
+        } catch (error) {
+          const panel = $("#signerFormFeedback");
+          if (panel) {
+            panel.hidden = false;
+            panel.textContent = error.message;
+          }
+          throw error;
+        }
+      });
+    };
+    $("#clearSignerForm").onclick = () => {
+      $("#signerForm").reset();
+      $("#signerFormHint").textContent =
+        "Choisir un contact remplit le formulaire. Cliquez ensuite sur « + Ajouter ce signataire » pour l’ajouter à ce document.";
+      $("#signerFormFeedback").hidden = true;
     };
     document.querySelectorAll(".remove-contact").forEach(
       (button) =>
@@ -697,12 +724,7 @@ function editor() {
     $("#place").onclick = () => {
       if (!$("#manualSigner").value)
         return notify("Choisissez d’abord le signataire.", "warning");
-      S.placing = {
-        signer: $("#manualSigner").value,
-        kind: $("#manualKind").value,
-      };
-      $("#pdfHost").classList.add("placing");
-      notify("Cliquez à l’emplacement souhaité dans la page.");
+      startPlacing($("#manualSigner").value, $("#manualKind").value);
     };
   }
   $("#shareLinks").onclick = (e) => busy(e.target, () => issueLinks("links"));
@@ -719,8 +741,8 @@ function editor() {
   });
   if (S.dirty && $("#savedState"))
     $("#savedState").textContent = "Modifications à enregistrer";
-  drawSigners();
   drawFields();
+  renderZoneAction();
   drawPage();
   resizeObserver = new ResizeObserver(() => {
     clearTimeout(S.resizeTimer);
@@ -729,18 +751,34 @@ function editor() {
   resizeObserver.observe($("#pdfHost"));
 }
 function drawSigners() {
+  $("#signerSummary").textContent =
+    `${S.signers.length} signataire(s) ajouté(s) à ce document. Le carnet de contacts est indépendant de cette liste.`;
   $("#signerList").innerHTML =
     S.signers
-      .map(
-        (s, i) =>
-          `<div class="signer-item" style="--signer-color:${["#3563e9", "#a34ab9", "#168476", "#b2781c"][i % 4]}"><span class="avatar">${esc(s.name.slice(0, 1))}</span><div><strong>${esc(s.name)}</strong><small>${esc(s.role || s.email)}</small><span class="small">${i + 1} · ${statusNames[s.status || "pending"]}${s.copy_sent_at ? " · copie envoyée" : ""}</span></div>${editable() ? `<button class="remove-signer" data-id="${s.id}" aria-label="Retirer ${esc(s.name)}">×</button>` : ""}</div>`,
-      )
+      .map((s, i) => {
+        const fields = S.fields.filter((f) => f.signer_id === s.id);
+        const signatures = fields.filter((f) =>
+          ["signature", "initials"].includes(f.kind),
+        ).length;
+        return `<div class="signer-item" style="--signer-color:${["#3563e9", "#a34ab9", "#168476", "#b2781c"][i % 4]}"><span class="avatar">${esc(s.name.slice(0, 1))}</span><div><strong>${esc(s.name)}</strong><small>${esc(s.role || s.email)}</small><span class="small">${i + 1} · ${statusNames[s.status || "pending"]}${s.copy_sent_at ? " · copie envoyée" : ""}</span><p class="signer-zone-count ${signatures ? "" : "signer-needs-zone"}">${fields.length} zone(s) attribuée(s) · ${signatures} signature(s) / paraphe(s)${signatures ? "" : " — à compléter"}</p>${editable() ? `<div class="signer-actions"><button type="button" class="btn secondary" data-place-signer="${s.id}" aria-label="Placer une signature pour ${esc(s.name)}">Placer sa signature</button><button type="button" class="btn secondary remove-signer" data-id="${s.id}" aria-label="Retirer ${esc(s.name)}">Retirer du document</button></div>` : ""}</div></div>`;
+      })
       .join("") ||
     '<p class="small muted">Ajoutez les personnes qui doivent lire et signer ce document.</p>';
   document.querySelectorAll(".remove-signer").forEach(
     (el) =>
       (el.onclick = () =>
         busy(el, async () => {
+          const signer = S.signers.find((s) => s.id === el.dataset.id);
+          if (!signer || !editable()) return;
+          const count = S.fields.filter(
+            (f) => f.signer_id === signer.id,
+          ).length;
+          if (
+            !confirm(
+              `Retirer ${signer.name} de ce document ?\n\n${count ? `Ses ${count} zone(s) seront aussi supprimées. Pour les conserver, annulez puis réattribuez-les à une autre personne.` : "Aucune zone ne lui est attribuée."}\n\nLes autres signataires, leurs zones et le contact dans le carnet seront conservés.`,
+            )
+          )
+            return;
           if (!S.demo)
             check(
               await supabase
@@ -750,9 +788,33 @@ function drawSigners() {
             );
           S.signers = S.signers.filter((s) => s.id !== el.dataset.id);
           S.fields = S.fields.filter((f) => f.signer_id !== el.dataset.id);
+          if (S.deletedField?.field.signer_id === el.dataset.id)
+            S.deletedField = null;
+          S.placing = null;
+          if (!S.fields.some((f) => f.id === S.selected)) S.selected = null;
           dirty();
           editor();
+          notify(
+            `${signer.name} a été retiré du document. Les autres signataires sont conservés.`,
+            "success",
+          );
         })),
+  );
+  document.querySelectorAll("[data-place-signer]").forEach((button) => {
+    button.onclick = () =>
+      startPlacing(button.dataset.placeSigner, "signature");
+  });
+}
+function startPlacing(signerId, kind = "signature") {
+  if (!editable() || !S.signers.some((s) => s.id === signerId)) return;
+  S.placing = { signer: signerId, kind };
+  $("#manualSigner").value = signerId;
+  $("#manualKind").value = kind;
+  $("#pdfHost").classList.add("placing");
+  $("#pdfHost").scrollIntoView({ block: "center" });
+  const signer = S.signers.find((s) => s.id === signerId);
+  notify(
+    `Touchez l’emplacement de la ${kinds[kind].toLowerCase()} de ${signer.name} sur le PDF.`,
   );
 }
 async function addSigner() {
@@ -808,6 +870,10 @@ async function addSigner() {
   S.signers.push({ ...signer, status: "pending" });
   S.doc.prepared_at = null;
   editor();
+  notify(
+    `${name} ajouté au document. Il est maintenant disponible dans les menus des zones.`,
+    "success",
+  );
 }
 function goPage(p) {
   if (!Number.isInteger(p) || p < 1 || p > S.pdf.numPages) return;
@@ -941,7 +1007,14 @@ function drawOverlays() {
         el.onpointerup = () => {
           el.onpointermove = null;
           S.selected = f.id;
-          dirty();
+          if (
+            ["x", "y", "width", "height"].some(
+              (key) => Math.abs(f[key] - start[key]) > 0.00001,
+            )
+          ) {
+            f.confirmed = false;
+            dirty();
+          }
           drawFields();
           drawOverlays();
         };
@@ -971,27 +1044,91 @@ function drawOverlays() {
                     : 0),
             }),
           );
+          f.confirmed = false;
           dirty();
           position();
+          drawFields();
         }
         if (e.key === "Delete") {
-          S.fields = S.fields.filter((v) => v.id !== f.id);
-          dirty();
-          drawFields();
-          drawOverlays();
+          e.preventDefault();
+          deleteZone(f.id);
         }
       };
     }
     layer.append(el);
   }
 }
+function deleteZone(id) {
+  if (!editable()) return;
+  const index = S.fields.findIndex((f) => f.id === id);
+  if (index < 0) return;
+  const field = S.fields[index];
+  S.deletedField = { documentId: S.doc.id, field: { ...field }, index };
+  S.fields.splice(index, 1);
+  if (S.selected === id) S.selected = null;
+  dirty();
+  drawFields();
+  drawOverlays();
+  renderZoneAction();
+}
+function renderZoneAction() {
+  const panel = $("#zoneActionFeedback"),
+    deleted = S.deletedField;
+  if (!panel) return;
+  panel.hidden = !deleted || deleted.documentId !== S.doc.id || !editable();
+  if (panel.hidden) return;
+  panel.replaceChildren(
+    document.createTextNode(
+      `Zone « ${kinds[deleted.field.kind]} » de la page ${deleted.field.page} supprimée. Les autres zones et signataires sont conservés. Enregistrez les zones pour conserver cette modification.`,
+    ),
+  );
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.className = "btn secondary";
+  undo.textContent = "Annuler la dernière suppression";
+  undo.onclick = () => {
+    if (
+      !editable() ||
+      S.deletedField !== deleted ||
+      deleted.documentId !== S.doc.id
+    )
+      return;
+    const field = { ...deleted.field };
+    if (field.signer_id && !S.signers.some((s) => s.id === field.signer_id)) {
+      field.signer_id = null;
+      field.confirmed = false;
+    }
+    if (!S.fields.some((f) => f.id === field.id))
+      S.fields.splice(Math.min(deleted.index, S.fields.length), 0, field);
+    S.deletedField = null;
+    S.selected = field.id;
+    dirty();
+    goPage(field.page);
+    drawFields();
+    drawOverlays();
+    panel.hidden = false;
+    panel.replaceChildren(
+      document.createTextNode(
+        "Zone rétablie. Enregistrez les zones après vérification.",
+      ),
+    );
+  };
+  panel.append(undo);
+}
 function drawFields() {
+  drawSigners();
   $("#zoneCount").textContent = S.fields.length;
+  const unassigned = S.fields.filter(
+    (f) => !S.signers.some((s) => s.id === f.signer_id),
+  ).length;
+  const unchecked = S.fields.filter((f) => !f.confirmed).length;
+  $("#zoneSummary").textContent =
+    `${S.fields.length} zone(s) · ${unassigned} à attribuer · ${unchecked} à vérifier. Chaque signataire doit avoir au moins une zone Signature ou Paraphe.`;
   $("#fieldList").innerHTML =
     S.fields
       .map((f) => {
         const s = S.signers.find((s) => s.id === f.signer_id);
-        return `<button class="zone-item ${f.id === S.selected ? "selected" : ""}" data-field="${f.id}"><span>${esc(s?.name || "À attribuer")}<small>${esc(kinds[f.kind])} · page ${f.page}${f.confidence != null ? " · indice " + Math.round(f.confidence * 100) + " %" : ""}</small></span><span>${f.confirmed ? "✓" : "!"}</span></button>`;
+        return `<div class="zone-row"><button type="button" class="zone-item ${f.id === S.selected ? "selected" : ""}" data-field="${f.id}"><span>${esc(s?.name || "À attribuer")}<small>${esc(kinds[f.kind])} · page ${f.page}${f.confidence != null ? " · indice " + Math.round(f.confidence * 100) + " %" : ""}</small></span><span>${f.confirmed ? "✓" : "!"}</span></button>${editable() ? `<button type="button" class="btn danger zone-delete" data-delete-zone="${f.id}" aria-label="Supprimer la zone ${esc(kinds[f.kind])} de ${esc(s?.name || "À attribuer")} page ${f.page}">Supprimer</button>` : ""}</div>`;
       })
       .join("") ||
     '<div class="empty small"><p>Lancez l’analyse du PDF ou placez une zone manuellement.</p></div>';
@@ -1004,27 +1141,40 @@ function drawFields() {
         drawFields();
       }),
   );
+  document.querySelectorAll("[data-delete-zone]").forEach((button) => {
+    button.onclick = () => deleteZone(button.dataset.deleteZone);
+  });
   const f = S.fields.find((f) => f.id === S.selected);
   const selectedTools = $("#selectedZoneTools");
   if (selectedTools) {
     selectedTools.hidden = !f || !editable();
     selectedTools.innerHTML =
       f && editable()
-        ? `<strong>Modifier la zone sélectionnée · page ${f.page}</strong><label>Signataire de cette zone<select id="selectedSigner">${signerOptions(f.signer_id)}</select></label><label>Type de cette zone<select id="selectedKind">${kindOptions(f.kind)}</select></label><p class="small muted">Ces réglages modifient directement le cadre sélectionné sur le PDF.</p>`
+        ? `<strong>Modifier la zone sélectionnée · page ${f.page}</strong><label>Signataire de cette zone<select id="selectedSigner">${signerOptions(f.signer_id)}</select></label><label>Type de cette zone<select id="selectedKind">${kindOptions(f.kind)}</select></label><label class="check"><input id="selectedConfirmed" type="checkbox" ${f.confirmed ? "checked" : ""}>Position et attribution vérifiées</label><div class="zone-actions"><button type="button" class="btn danger" id="selectedDeleteField">Supprimer cette zone</button><button type="button" class="btn secondary" id="selectedSaveFields">Enregistrer toutes les zones</button></div><p class="small muted">Supprimer cette zone conserve les signataires et toutes les autres zones. Changer le signataire ou le type demande une nouvelle vérification de cette zone.</p>`
         : "";
     if (f && editable()) {
       $("#selectedSigner").onchange = (e) => {
         f.signer_id = e.target.value || null;
+        f.confirmed = false;
         dirty();
         drawFields();
         drawOverlays();
       };
       $("#selectedKind").onchange = (e) => {
         f.kind = e.target.value;
+        f.confirmed = false;
         dirty();
         drawFields();
         drawOverlays();
       };
+      $("#selectedConfirmed").onchange = (e) => {
+        f.confirmed = e.target.checked;
+        dirty();
+        drawFields();
+        drawOverlays();
+      };
+      $("#selectedDeleteField").onclick = () => deleteZone(f.id);
+      $("#selectedSaveFields").onclick = (e) => busy(e.target, saveFields);
     }
   }
   $("#fieldDetail").innerHTML =
@@ -1033,11 +1183,14 @@ function drawFields() {
       : "";
   if (f && editable()) {
     const change = () => {
+      const reassigned =
+        f.signer_id !== ($("#fieldSigner").value || null) ||
+        f.kind !== $("#fieldKind").value;
       f.signer_id = $("#fieldSigner").value || null;
       f.kind = $("#fieldKind").value;
       f.label = $("#fieldLabel").value;
       f.required = $("#fieldRequired").checked;
-      f.confirmed = $("#fieldConfirmed").checked;
+      f.confirmed = !reassigned && $("#fieldConfirmed").checked;
       dirty();
       drawOverlays();
     };
@@ -1054,12 +1207,7 @@ function drawFields() {
           drawFields();
         }),
     );
-    $("#deleteField").onclick = () => {
-      S.fields = S.fields.filter((v) => v.id !== f.id);
-      dirty();
-      drawFields();
-      drawOverlays();
-    };
+    $("#deleteField").onclick = () => deleteZone(f.id);
   }
 }
 async function runAnalysis() {
@@ -1176,14 +1324,29 @@ function showPreparationError(error) {
   panel.scrollIntoView({ block: "center" });
 }
 function validateDraft() {
-  if (!S.signers.length) throw new Error("Ajoutez au moins un signataire.");
+  if (!S.signers.length)
+    throw new Error(
+      "Ajoutez au moins un signataire avec le bouton « + Ajouter ce signataire » dans l’étape 1.",
+    );
+  const pendingEmail = $("#signerEmail")?.value?.trim().toLowerCase();
+  if (
+    ($("#signerName")?.value?.trim() ||
+      pendingEmail ||
+      $("#signerRole")?.value?.trim()) &&
+    !S.signers.some((s) => s.email === pendingEmail)
+  )
+    throw new Error(
+      "Un destinataire est encore dans le formulaire d’ajout. Cliquez sur « + Ajouter ce signataire » pour l’inclure, ou videz ce formulaire si vous ne souhaitez pas l’ajouter.",
+    );
   if (!S.fields.length)
     throw preparationError(
       "Ajoutez une zone de signature sur le PDF pour chaque signataire.",
       null,
       S.signers[0],
     );
-  const unreviewed = S.fields.find((f) => !f.signer_id || !f.confirmed);
+  const unreviewed = S.fields.find(
+    (f) => !S.signers.some((s) => s.id === f.signer_id) || !f.confirmed,
+  );
   if (unreviewed)
     throw preparationError(
       `Attribuez et vérifiez la zone « ${kinds[unreviewed.kind]} » de la page ${unreviewed.page} avant d’enregistrer.`,

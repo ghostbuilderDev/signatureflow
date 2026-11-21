@@ -1116,3 +1116,63 @@ textarea {
     font-size: 12px;
   }
 }
+
+/* SignatureFlow 3.0.2 — actions de zones accessibles sur téléphone. */
+.zone-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 0;
+}
+.zone-row .zone-item {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.zone-row .zone-delete {
+  flex: 0 0 auto;
+  min-height: 44px;
+  font-size: 12px;
+  padding: 8px;
+}
+.zone-actions,
+.signer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.zone-actions .btn {
+  flex: 1 1 145px;
+  min-height: 44px;
+}
+.signer-actions {
+  margin-top: 8px;
+}
+.signer-actions .btn {
+  min-height: 44px;
+  font-size: 11px;
+  padding: 8px 10px;
+}
+.signer-actions .remove-signer {
+  color: #9c2d2d;
+}
+.signer-zone-count {
+  margin: 7px 0;
+  color: #27664d;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.signer-needs-zone {
+  color: #8c5d17;
+}
+#selectedZoneTools .check {
+  align-items: center;
+}
+#zoneActionFeedback {
+  font-size: 13px;
+  margin: 12px 0;
+}
+#zoneActionFeedback[hidden],
+#signerFormFeedback[hidden] {
+  display: none;
+}
