@@ -1176,3 +1176,118 @@ textarea {
 #signerFormFeedback[hidden] {
   display: none;
 }
+
+/* Signature choice: readable controls and true image previews on desktop and mobile. */
+.signature-choice {
+  min-width: 0;
+}
+.signature-choice fieldset {
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  border: 0;
+}
+.signature-choice legend {
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+.signature-methods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.signature-methods label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.signature-methods label:has(input:checked) {
+  background: #edf2ff;
+  border-color: #345ce6;
+}
+.signature-choice input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: #345ce6;
+}
+.signature-style-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.signature-style {
+  min-width: 0;
+  border: 2px solid #dce3ef;
+  border-radius: 12px;
+  padding: 14px;
+  cursor: pointer;
+  background: #fff;
+}
+.signature-style:has(input:checked) {
+  border-color: #345ce6;
+  background: #f5f7ff;
+}
+.signature-style:focus-within {
+  outline: 3px solid #a8b9ff;
+  outline-offset: 2px;
+}
+.signature-style > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.signature-style img {
+  display: block;
+  width: 100%;
+  height: 95px;
+  object-fit: contain;
+  margin-top: 12px;
+}
+.signature-style .style-loading {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.initials-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  font-size: 14px;
+}
+.initials-preview img {
+  width: 140px;
+  height: 70px;
+  object-fit: contain;
+}
+.signature-choice [hidden] {
+  display: none !important;
+}
+@media (max-width: 640px) {
+  .signature-style-grid {
+    grid-template-columns: 1fr;
+  }
+  .signature-style {
+    display: grid;
+    grid-template-columns: 95px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+  .signature-style img {
+    height: 70px;
+    margin: 0;
+  }
+  .signature-methods {
+    flex-direction: column;
+  }
+}

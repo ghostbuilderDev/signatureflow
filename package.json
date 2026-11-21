@@ -1,7 +1,7 @@
 {
   "name": "signatureflow",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.0.3",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -10,10 +10,13 @@
     "postinstall": "node scripts/prepare-assets.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "playwright test",
-    "check": "node --check src/main.js && node --check src/lib/detection-core.js && node --check src/lib/analyzer.js && node --check integration/document-flow-ui.js && node --check integration/jdc/signatureflow-bridge.js",
+    "check": "node --check src/main.js && node --check src/lib/detection-core.js && node --check src/lib/analyzer.js && node --check integration/document-flow-ui.js && node --check integration/jdc/signatureflow-bridge.js && node --check src/lib/signature-choice.js",
     "test:functions": "deno test --allow-env --allow-read --allow-net tests/functions.test.ts tests/flow-security.test.ts tests/flow-api.test.ts"
   },
   "dependencies": {
+    "@fontsource/allura": "5.3.0",
+    "@fontsource/caveat": "5.3.0",
+    "@fontsource/dancing-script": "5.3.0",
     "@supabase/supabase-js": "2.57.4",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "5.4.149",

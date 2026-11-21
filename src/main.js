@@ -5,6 +5,10 @@ import { createClient } from "@supabase/supabase-js";
 import * as pdfjs from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import SignaturePad from "signature_pad";
+import {
+  signatureChoiceMarkup,
+  createSignatureChoice,
+} from "./lib/signature-choice.js";
 import { analyzePdf } from "./lib/analyzer.js";
 import { bounded, overlap } from "./lib/detection-core.js";
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -1545,7 +1549,7 @@ async function signingPage(token) {
             )
             .join(
               "",
-            )}<label>Tracez votre signature<div class="signature-box"><canvas id="signatureCanvas" aria-label="Zone de dessin de la signature"></canvas></div></label><button class="btn secondary fit" id="clearSignature">Effacer la signature</button>${data.fields.some((f) => f.kind === "initials") ? '<label>Tracez vos initiales<div class="signature-box"><canvas id="initialsCanvas" aria-label="Zone de dessin des initiales"></canvas></div></label><button class="btn secondary fit" id="clearInitials">Effacer les initiales</button>' : ""}<label class="check consent"><input id="consent" type="checkbox"><span>${consentText}</span></label><button class="btn primary" id="submitSignature" ${data.document.requireFullRead ? "disabled" : ""}>${data.document.workflowType === "acknowledgement" ? "Confirmer ma prise de connaissance" : "Confirmer et signer le document"}</button><p class="notice small" id="signingGate" role="status"></p><button type="button" class="btn secondary" id="goUnread" hidden>Consulter la prochaine page non lue</button><p class="small muted">Cette signature utilise le lien personnel envoyé à ${esc(data.signer.email)} et votre consentement. Elle ne comporte pas de vérification de pièce d’identité.</p></section>`
+            )}${signatureChoiceMarkup(data.fields.some((f) => f.kind === "initials"))}<label class="check consent"><input id="consent" type="checkbox"><span>${consentText}</span></label><button class="btn primary" id="submitSignature" ${data.document.requireFullRead ? "disabled" : ""}>${data.document.workflowType === "acknowledgement" ? "Confirmer ma prise de connaissance" : "Confirmer et signer le document"}</button><p class="notice small" id="signingGate" role="status"></p><button type="button" class="btn secondary" id="goUnread" hidden>Consulter la prochaine page non lue</button><p class="small muted">Cette signature utilise le lien personnel envoyé à ${esc(data.signer.email)} et votre consentement. Elle ne comporte pas de vérification de pièce d’identité.</p></section>`
         : already
           ? '<div class="success">Votre signature est enregistrée. Le PDF accessible ci-dessus contient la dernière version disponible.</div>'
           : ""
@@ -1701,7 +1705,6 @@ async function signingPage(token) {
       previousWidth = width;
     };
     resize();
-    observed.observe(c);
     const handler = new ResizeObserver(resize);
     handler.observe(c);
     pad._observer = handler;
@@ -1710,8 +1713,16 @@ async function signingPage(token) {
   };
   const pad = makePad("#signatureCanvas"),
     initialPad = $("#initialsCanvas") ? makePad("#initialsCanvas") : null;
-  $("#clearSignature").onclick = () => pad.clear();
-  $("#clearInitials")?.addEventListener("click", () => initialPad.clear());
+  const signatureChoice = createSignatureChoice({
+    root: $("#signForm"),
+    name: data.signer.name,
+    pad,
+    initialPad,
+    onChange: () => {
+      $("#consent").checked = false;
+    },
+  });
+  pads.push({ off: () => signatureChoice.destroy() });
   const requestId = uuid();
   $("#submitSignature").onclick = (e) =>
     busy(e.target, async () => {
@@ -1719,10 +1730,7 @@ async function signingPage(token) {
         throw new Error(
           `Consultez toutes les pages avant de signer (${viewedPages.size}/${pdf.numPages}).`,
         );
-      if (pad.isEmpty() || (initialPad && initialPad.isEmpty()))
-        throw new Error(
-          "Tracez votre signature et vos initiales si demandées.",
-        );
+      const signatureImages = signatureChoice.getImages();
       if (!$("#consent").checked)
         throw new Error(
           "Confirmez votre lecture et votre consentement avant de signer.",
@@ -1747,8 +1755,7 @@ async function signingPage(token) {
         expectedSha256: data.document.sha256,
         typedName,
         accepted: true,
-        signatureDataUrl: pad.toDataURL("image/png"),
-        initialsDataUrl: initialPad?.toDataURL("image/png"),
+        ...signatureImages,
         values,
         readPages: [...viewedPages].sort((a, b) => a - b),
       });

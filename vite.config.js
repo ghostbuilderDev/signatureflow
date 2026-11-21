@@ -15,7 +15,7 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         skipWaiting: true,
         clientsClaim: true,
-        globPatterns: ["**/*.{js,css,html,svg,webmanifest}"],
+        globPatterns: ["**/*.{js,css,html,svg,webmanifest,woff,woff2}"],
         globIgnores: ["ocr/**", "pdf-fonts/**"],
         maximumFileSizeToCacheInBytes: 6000000,
         navigateFallbackDenylist: [/^\/auth\//],
