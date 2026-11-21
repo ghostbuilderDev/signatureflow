@@ -1,4 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+const { version } = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+);
 
 test("password sign-in explains rejected credentials and never falls back to creating a user", async ({
   page,
@@ -25,7 +29,7 @@ test("password sign-in explains rejected credentials and never falls back to cre
     },
   );
   await page.goto("/");
-  await expect(page.locator(".version")).toHaveText("v2.1.1");
+  await expect(page.locator(".version")).toHaveText("v" + version);
   await page.locator("#email").fill("organisateur@example.fr");
   await page.locator("#password").fill("mot-de-passe-test");
   await page.locator("#showPassword").check();

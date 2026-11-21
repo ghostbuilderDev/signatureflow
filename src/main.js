@@ -1,5 +1,6 @@
 import signatureflowPackage from "../package.json";
 import "./style.css";
+import "../integration/document-flow-ui.js";
 import { createClient } from "@supabase/supabase-js";
 import * as pdfjs from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -331,7 +332,7 @@ async function dashboard() {
   }
   const count = (s) => S.docs.filter((d) => d.status === s).length;
   shell(
-    `<main class="container"><div class="page-heading"><div><span class="eyebrow">ESPACE DOCUMENTS</span><h1>Les signatures avancent.</h1><p class="muted">Préparez un document et suivez chaque réponse au même endroit.</p></div>${!S.demo ? '<a class="btn secondary" href="./document-flow.html">Documents, versions et diffusions</a>' : ""}<button class="btn secondary" id="logout">${S.demo ? "Quitter l’essai" : "Déconnexion"}</button></div><div class="metrics"><div><strong>${count("draft")}</strong><span>À préparer</span></div><div><strong>${count("in_progress")}</strong><span>En signature</span></div><div><strong>${count("signed")}</strong><span>Finalisés</span></div></div><div class="dashboard-grid"><section class="card stack"><span class="eyebrow">NOUVEAU DOCUMENT</span><h2>Commencez par votre PDF</h2><form id="uploadForm" class="stack"><label class="dropzone">↥<strong>Choisir un document PDF</strong><span>20 Mo maximum · 200 pages</span><input id="file" type="file" accept=".pdf,application/pdf" required></label><label>Nom du document<input id="docName" required maxlength="200" placeholder="Ex. Briefing · Montereau · S49"></label><label>Référence du chantier (facultatif)<input id="sourceRef" maxlength="200" placeholder="Nom ou identifiant Journal de Chantier"></label><label>Type de circuit<select id="workflowType"><option value="approval">Validation — toutes les signatures sont nécessaires</option><option value="acknowledgement">Prise de connaissance — accusé individuel</option></select></label><label>Envoi du PDF signé<select id="completionMode"><option value="all_after_complete">Après la dernière signature, à tous les participants</option><option value="signer_after_each">Après chaque prise de connaissance, à la personne</option><option value="manual">Aucun envoi automatique</option></select></label><label>Autres personnes en copie à la fin (facultatif)<textarea id="completionRecipients" rows="2" maxlength="4000" placeholder="Une ou plusieurs adresses séparées par une virgule"></textarea></label><label class="check"><input id="requireFullRead" type="checkbox" checked>Chaque signataire doit consulter toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" checked>Inscrire le nom et la fonction avec la signature dans le PDF</label><button class="btn primary">Importer et préparer →</button></form></section><section class="card"><div class="row between"><h2>Mes documents</h2><label class="sr-only" for="filter">Rechercher</label><input id="filter" class="search" placeholder="Rechercher un document…"></div><div id="documentList"></div></section></div></main>`,
+    `<main class="container"><div class="page-heading"><div><span class="eyebrow">ESPACE DOCUMENTS</span><h1>Les signatures avancent.</h1><p class="muted">Préparez un document et suivez chaque réponse au même endroit.</p></div>${!S.demo ? '<a class="btn secondary" href="./document-flow.html">Documents, versions et diffusions</a>' : ""}<button class="btn secondary" id="logout">${S.demo ? "Quitter l’essai" : "Déconnexion"}</button></div><div class="metrics"><div><strong>${count("draft")}</strong><span>À préparer</span></div><div><strong>${count("in_progress")}</strong><span>En signature</span></div><div><strong>${count("signed")}</strong><span>Finalisés</span></div></div><div class="dashboard-grid"><section class="card stack"><span class="eyebrow">NOUVEAU DOCUMENT</span><h2>Commencez par votre PDF</h2><form id="uploadForm" class="stack">${window.SignatureFlowDocumentUI.pdfDropzoneMarkup("file", "20 Mo maximum · 200 pages")}<label>Nom du document<input id="docName" required maxlength="200" placeholder="Ex. Briefing · Montereau · S49"></label><label>Référence du chantier (facultatif)<input id="sourceRef" maxlength="200" placeholder="Nom ou identifiant Journal de Chantier"></label><label>Type de circuit<select id="workflowType"><option value="approval">Validation — toutes les signatures sont nécessaires</option><option value="acknowledgement">Prise de connaissance — accusé individuel</option></select></label><label>Envoi du PDF signé<select id="completionMode"><option value="all_after_complete">Après la dernière signature, à tous les participants</option><option value="signer_after_each">Après chaque prise de connaissance, à la personne</option><option value="manual">Aucun envoi automatique</option></select></label><label>Autres personnes en copie à la fin (facultatif)<textarea id="completionRecipients" rows="2" maxlength="4000" placeholder="Une ou plusieurs adresses séparées par une virgule"></textarea></label><label class="check"><input id="requireFullRead" type="checkbox" checked>Chaque signataire doit consulter toutes les pages</label><label class="check"><input id="identityStamp" type="checkbox" checked>Inscrire le nom et la fonction avec la signature dans le PDF</label><button class="btn primary">Importer et préparer →</button></form></section><section class="card"><div class="row between"><h2>Mes documents</h2><label class="sr-only" for="filter">Rechercher</label><input id="filter" class="search" placeholder="Rechercher un document…"></div><div id="documentList"></div></section></div></main>`,
   );
   const list = () => {
     $("#documentList").innerHTML =
@@ -359,11 +360,16 @@ async function dashboard() {
     if (S.session) supabase.auth.signOut();
     else login();
   };
-  $("#file").onchange = (e) => {
-    if (!$("#docName").value)
-      $("#docName").value =
-        e.target.files[0]?.name.replace(/\.pdf$/i, "") || "";
-  };
+  let inferredName = "";
+  const picker = window.SignatureFlowDocumentUI.bindPdfDropzone(
+    document.querySelector("[data-pdf-dropzone]"),
+    (file) => {
+      const name = $("#docName");
+      if (!name.value || name.value === inferredName)
+        name.value = file.name.replace(/\.pdf$/i, "");
+      inferredName = file.name.replace(/\.pdf$/i, "");
+    },
+  );
   $("#workflowType").onchange = (e) => {
     $("#completionMode").value =
       e.target.value === "acknowledgement"
@@ -372,12 +378,14 @@ async function dashboard() {
   };
   $("#uploadForm").onsubmit = (e) => {
     e.preventDefault();
-    busy(e.submitter, createDocument);
+    busy(e.submitter, async () => {
+      await picker.ready();
+      return createDocument(picker.getFile());
+    });
   };
 }
-async function createDocument() {
-  const file = $("#file").files[0],
-    name = $("#docName").value.trim(),
+async function createDocument(file) {
+  const name = $("#docName").value.trim(),
     source_ref = $("#sourceRef").value.trim(),
     workflow_type = $("#workflowType").value,
     completion_mode = $("#completionMode").value,

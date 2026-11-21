@@ -1,5 +1,8 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+const { version } = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
 let commit = process.env.GITHUB_SHA || "local";
 if (commit === "local") {
   try {
@@ -12,7 +15,7 @@ if (commit === "local") {
 await writeFile(
   "dist/version.json",
   JSON.stringify({
-    version: "3.0.0",
+    version,
     commit,
     builtAt: new Date().toISOString(),
   }) + "\n",

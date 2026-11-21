@@ -13,6 +13,138 @@
         })[c],
     );
   const date = (v) => (v ? new Date(v).toLocaleString("fr-FR") : "—");
+  const guardedWindows = new WeakSet();
+  function pdfDropzoneMarkup(id, hint = "PDF · 20 Mo maximum") {
+    return `<div class="sf-pdf-dropzone" data-pdf-dropzone><label for="${esc(id)}"><span class="sf-pdf-drop-icon" aria-hidden="true">↓</span><strong>Glissez votre PDF ici</strong><span id="${esc(id)}-help" class="sf-pdf-drop-hint">ou choisissez un fichier · ${esc(hint)}</span><input id="${esc(id)}" name="file" type="file" accept="application/pdf,.pdf" aria-describedby="${esc(id)}-help ${esc(id)}-selection ${esc(id)}-status"></label><span id="${esc(id)}-selection" class="sf-pdf-drop-selection" data-pdf-selection>Aucun fichier sélectionné</span><p id="${esc(id)}-status" class="sf-pdf-drop-status" data-pdf-status role="status" aria-live="polite" hidden></p></div>`;
+  }
+  function isFileDrag(event) {
+    const transfer = event.dataTransfer;
+    return (
+      !!transfer &&
+      (Array.from(transfer.types || []).includes("Files") ||
+        Array.from(transfer.items || []).some((item) => item.kind === "file") ||
+        transfer.files?.length > 0)
+    );
+  }
+  function bindPdfDropzone(zone, onFile = () => {}) {
+    const input = zone.querySelector('input[type="file"]');
+    const selection = zone.querySelector("[data-pdf-selection]");
+    const status = zone.querySelector("[data-pdf-status]");
+    const view = zone.ownerDocument.defaultView;
+    let selected = null,
+      sequence = 0,
+      dragDepth = 0,
+      pending = Promise.resolve();
+    // Only file drags are intercepted. Text selection and link drags keep working.
+    if (!guardedWindows.has(view)) {
+      guardedWindows.add(view);
+      for (const type of ["dragover", "drop"]) {
+        view.addEventListener(type, (event) => {
+          if (!isFileDrag(event)) return;
+          event.preventDefault();
+          if (!event.target?.closest?.("[data-pdf-dropzone]"))
+            event.dataTransfer.dropEffect = "none";
+          if (type === "drop")
+            view.document
+              .querySelectorAll(".sf-pdf-dropzone.is-dragging")
+              .forEach((element) => element.classList.remove("is-dragging"));
+        });
+      }
+    }
+    function syncInput(file) {
+      try {
+        const transfer = new view.DataTransfer();
+        if (file) transfer.items.add(file);
+        input.files = transfer.files;
+      } catch {
+        // The retained File also works where assigning input.files is unsupported.
+        input.value = "";
+      }
+    }
+    function message(text, error = false) {
+      status.textContent = text;
+      status.hidden = !text;
+      zone.classList.toggle("has-error", error);
+      input.setAttribute("aria-invalid", String(error));
+    }
+    async function choose(files, directory = false) {
+      const request = ++sequence;
+      try {
+        if (directory)
+          throw new Error("Déposez un fichier PDF, pas un dossier.");
+        if (files.length !== 1)
+          throw new Error("Déposez un seul fichier PDF à la fois.");
+        const file = files[0];
+        if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf")
+          throw new Error("Choisissez un fichier PDF.");
+        if (file.size > 20 * 1024 * 1024)
+          throw new Error("Le PDF dépasse 20 Mo.");
+        const header = await file.slice(0, 1024).arrayBuffer();
+        if (request !== sequence || !zone.isConnected) return;
+        if (!new TextDecoder().decode(header).includes("%PDF-"))
+          throw new Error("Ce fichier n’est pas un PDF valide.");
+        selected = file;
+        syncInput(file);
+        selection.textContent = `${file.name} · ${file.size < 1024 * 1024 ? Math.max(1, Math.round(file.size / 1024)) + " Ko" : (file.size / 1024 / 1024).toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " Mo"}`;
+        zone.classList.add("has-file");
+        message(
+          "PDF prêt à importer. Complétez les informations puis validez le formulaire.",
+        );
+        onFile(file);
+      } catch (error) {
+        if (request !== sequence || !zone.isConnected) return;
+        syncInput(selected);
+        message(
+          error.message +
+            (selected ? " Le PDF déjà sélectionné est conservé." : ""),
+          true,
+        );
+      }
+    }
+    input.addEventListener("change", () => {
+      if (input.files.length) pending = choose(Array.from(input.files));
+      else syncInput(selected);
+    });
+    zone.addEventListener("dragenter", (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      dragDepth++;
+      zone.classList.add("is-dragging");
+    });
+    zone.addEventListener("dragover", (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      zone.classList.add("is-dragging");
+    });
+    zone.addEventListener("dragleave", () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) zone.classList.remove("is-dragging");
+    });
+    zone.addEventListener("drop", (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragDepth = 0;
+      zone.classList.remove("is-dragging");
+      const directory = Array.from(event.dataTransfer.items || []).some(
+        (item) => item.webkitGetAsEntry?.()?.isDirectory,
+      );
+      pending = choose(Array.from(event.dataTransfer.files), directory);
+    });
+    return {
+      getFile: () => selected,
+      ready: () => pending,
+      clear() {
+        sequence++;
+        selected = null;
+        syncInput(null);
+        selection.textContent = "Aucun fichier sélectionné";
+        zone.classList.remove("has-file", "is-dragging");
+        message("");
+      },
+    };
+  }
   const types = {
     CSF: "CSF",
     ISF: "ISF",
@@ -217,7 +349,7 @@
                 candidate?.id,
               )}</select></label>`
             : ""
-        }<label>Fichier PDF<input name="file" type="file" accept="application/pdf,.pdf"></label><label>CSF associée<select name="linkedCSFVersionId"><option value="">Aucune</option>${options(
+        }${pdfDropzoneMarkup("sf3-pdf-file")}<label>CSF associée<select name="linkedCSFVersionId"><option value="">Aucune</option>${options(
           (listCache?.versions || [])
             .filter(
               (v) =>
@@ -234,11 +366,25 @@
       );
       host.querySelector("[data-back]").onclick = () => busy(null, home);
       const form = host.querySelector("form");
+      const picker = bindPdfDropzone(
+        form.querySelector("[data-pdf-dropzone]"),
+        (file) => {
+          if (form.elements.sourceDocumentId)
+            form.elements.sourceDocumentId.value = "";
+          if (form.elements.title && !form.elements.title.value)
+            form.elements.title.value = file.name.replace(/\.pdf$/i, "");
+        },
+      );
+      if (form.elements.sourceDocumentId)
+        form.elements.sourceDocumentId.addEventListener("change", () => {
+          if (form.elements.sourceDocumentId.value) picker.clear();
+        });
       form.onsubmit = (e) => {
         e.preventDefault();
         busy(e.submitter, async () => {
+          await picker.ready();
           const f = new FormData(form),
-            file = form.elements.file.files[0],
+            file = picker.getFile(),
             sourceId = f.get("sourceDocumentId") || null;
           let folderId = doc?.folder_id || f.get("folderId") || null;
           if (!sourceId && !file)
@@ -565,5 +711,5 @@
       reload: home,
     };
   }
-  root.SignatureFlowDocumentUI = { create };
+  root.SignatureFlowDocumentUI = { create, pdfDropzoneMarkup, bindPdfDropzone };
 })(typeof window !== "undefined" ? window : globalThis);
